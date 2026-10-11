@@ -1,0 +1,395 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+  body {
+    font-family: 'Plus Jakarta Sans', Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background-color: #E8ECEF;
+    color: #18202A;
+    margin: 0;
+    padding: 0;
+    min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
+    background-image: radial-gradient(rgba(30, 45, 65, 0.04) 1px, transparent 1px);
+    background-size: 24px 24px;
+  }
+}
+
+/* Unique calming scrollbar with subtle hover glow */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: rgba(232, 236, 239, 0.8);
+}
+::-webkit-scrollbar-thumb {
+  background: #BCC5D0;
+  border-radius: 9999px;
+  transition: background 0.2s ease;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #4A7BB0;
+}
+
+/* Rich, soothing micro-animations */
+@keyframes modalEnter {
+  0% {
+    opacity: 0;
+    transform: scale(0.96) translateY(12px);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes gentleBreathe {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(74, 123, 176, 0.2);
+  }
+  50% {
+    transform: scale(1.025);
+    box-shadow: 0 0 0 8px rgba(74, 123, 176, 0);
+  }
+}
+
+@keyframes floatGentle {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-4px);
+  }
+}
+
+@keyframes pulseSoft {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.65;
+    transform: scale(0.92);
+  }
+}
+
+.animate-modal-enter {
+  animation: modalEnter 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-breathe {
+  animation: gentleBreathe 4s ease-in-out infinite;
+}
+
+.animate-float-slow {
+  animation: floatGentle 5s ease-in-out infinite;
+}
+
+.animate-pulse-soft {
+  animation: pulseSoft 2.5s ease-in-out infinite;
+}
+
+/* Card hover tactile feedback */
+.card-hover-effect {
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+}
+.card-hover-effect:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px -4px rgba(24, 32, 42, 0.06), 0 2px 6px -1px rgba(24, 32, 42, 0.03);
+}
+
+/* Clean utility classes */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Unique Laser Scan & Document Ingestion Animation */
+@keyframes laserScan {
+  0% {
+    top: 2%;
+    opacity: 0.9;
+  }
+  50% {
+    top: 94%;
+    opacity: 1;
+  }
+  100% {
+    top: 2%;
+    opacity: 0.9;
+  }
+}
+.animate-laser-scan {
+  animation: laserScan 2.4s ease-in-out infinite;
+}
+
+/* Unique Scroll Reveal & View Transition Animations */
+@keyframes scrollReveal {
+  0% {
+    opacity: 0;
+    transform: translateY(14px) scale(0.995);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+.animate-scroll-reveal {
+  animation: scrollReveal 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes tabSwitch {
+  0% {
+    opacity: 0;
+    transform: translateY(10px) scale(0.995);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+.animate-tab-switch {
+  animation: tabSwitch 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Mint Glow Pulse for Newly Discovered Biomarkers */
+@keyframes pulseGlowMint {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(74, 150, 113, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 0 8px rgba(74, 150, 113, 0);
+  }
+}
+.animate-glow-mint {
+  animation: pulseGlowMint 2.2s ease-in-out infinite;
+}
+
+/* Flashy Landing Page Keyframes & Effects */
+@keyframes textShimmer {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+.text-gradient-shimmer {
+  background: linear-gradient(90deg, #18202A 0%, #396696 35%, #4A9671 65%, #18202A 100%);
+  background-size: 200% auto;
+  color: transparent;
+  -webkit-background-clip: text;
+  background-clip: text;
+  animation: textShimmer 6s ease-in-out infinite;
+}
+
+.text-gradient-tranquil {
+  background: linear-gradient(135deg, #203C59 0%, #4A7BB0 50%, #387E5D 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+@keyframes ecgSweep {
+  0% {
+    stroke-dashoffset: 800;
+  }
+  100% {
+    stroke-dashoffset: 0;
+  }
+}
+
+.animate-ecg {
+  stroke-dasharray: 800;
+  animation: ecgSweep 4s linear infinite;
+}
+
+@keyframes auroraFloat {
+  0%, 100% {
+    transform: translate(0px, 0px) scale(1);
+    opacity: 0.45;
+  }
+  33% {
+    transform: translate(30px, -20px) scale(1.08);
+    opacity: 0.6;
+  }
+  66% {
+    transform: translate(-20px, 20px) scale(0.95);
+    opacity: 0.4;
+  }
+}
+
+.animate-aurora-1 {
+  animation: auroraFloat 12s ease-in-out infinite;
+}
+
+.animate-aurora-2 {
+  animation: auroraFloat 16s ease-in-out infinite reverse;
+}
+
+.animate-aurora-3 {
+  animation: auroraFloat 14s ease-in-out infinite 2s;
+}
+
+@keyframes radarPing {
+  0% {
+    transform: scale(0.95);
+    opacity: 0.8;
+  }
+  70% {
+    transform: scale(1.6);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1.6);
+    opacity: 0;
+  }
+}
+
+.animate-radar-ping {
+  animation: radarPing 3s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+
+/* Glassmorphism Ultra Premium */
+.glass-panel {
+  background: rgba(255, 255, 255, 0.78);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(220, 226, 234, 0.85);
+}
+
+.glass-card-interactive {
+  background: rgba(255, 255, 255, 0.82);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid rgba(220, 226, 234, 0.8);
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.glass-card-interactive:hover {
+  transform: translateY(-4px);
+  background: rgba(255, 255, 255, 0.95);
+  border-color: rgba(74, 123, 176, 0.4);
+  box-shadow: 0 20px 40px -12px rgba(24, 32, 42, 0.08), 0 0 0 1px rgba(74, 123, 176, 0.15);
+}
+
+.glow-beacon-tranquil {
+  box-shadow: 0 0 24px -2px rgba(74, 123, 176, 0.45);
+}
+
+.glow-beacon-mint {
+  box-shadow: 0 0 24px -2px rgba(74, 150, 113, 0.45);
+}
+
+.subtle-biometric-grid {
+  background-image: 
+    linear-gradient(to right, rgba(24, 32, 42, 0.03) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(24, 32, 42, 0.03) 1px, transparent 1px);
+  background-size: 40px 40px;
+}
+
+/* ==================== FLUID LIKE ANIMATIONS & MORPHING ==================== */
+@keyframes liquidMorph {
+  0%, 100% {
+    border-radius: 60% 40% 30% 70% / 60% 30% 70% 40%;
+    transform: rotate(0deg);
+  }
+  34% {
+    border-radius: 40% 60% 60% 40% / 40% 50% 50% 60%;
+  }
+  67% {
+    border-radius: 70% 30% 50% 50% / 30% 40% 60% 70%;
+    transform: rotate(180deg);
+  }
+}
+
+.animate-liquid-morph {
+  animation: liquidMorph 14s ease-in-out infinite;
+}
+
+/* "Appear out of nowhere" materialization burst */
+@keyframes materializeBurst {
+  0% {
+    opacity: 0;
+    filter: blur(28px) brightness(2.2);
+    transform: scale(0.65) translateY(40px);
+  }
+  50% {
+    opacity: 0.85;
+    filter: blur(6px) brightness(1.3);
+    transform: scale(1.05) translateY(-6px);
+  }
+  100% {
+    opacity: 1;
+    filter: blur(0px) brightness(1);
+    transform: scale(1) translateY(0);
+  }
+}
+
+.animate-materialize-burst {
+  animation: materializeBurst 0.9s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Liquid Shimmer Flow */
+@keyframes liquidFlowBorder {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+.liquid-shimmer-border {
+  background: linear-gradient(90deg, #4A7BB0, #4A9671, #876EBA, #E07E56, #4A7BB0);
+  background-size: 300% 300%;
+  animation: liquidFlowBorder 6s linear infinite;
+}
+
+/* ==================== COLOR NEGATE & SENSORY INVERT ==================== */
+.sensory-negate-active {
+  filter: invert(0.94) hue-rotate(185deg);
+  background-color: #0F141C !important;
+}
+
+/* Fluid Negate Cursor */
+.liquid-cursor-negate {
+  position: fixed;
+  pointer-events: none;
+  z-index: 9999;
+  border-radius: 9999px;
+  background-color: #FFFFFF;
+  mix-blend-mode: difference;
+  transform: translate(-50%, -50%);
+  transition: width 0.3s cubic-bezier(0.16, 1, 0.3, 1), height 0.3s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.2s ease;
+}
+
+/* Color Negate Hover Zone */
+.negate-on-hover {
+  transition: filter 0.4s cubic-bezier(0.16, 1, 0.3, 1), transform 0.3s ease;
+}
+.negate-on-hover:hover {
+  filter: invert(1) hue-rotate(180deg);
+  transform: scale(1.02);
+}
+
+/* Ultra Smooth Fluid Transitions */
+.fluid-transition {
+  transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
