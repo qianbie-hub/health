@@ -2,7 +2,7 @@
 
 > **Enterprise Health Intelligence Stack**: Seamlessly unifying continuous wearable sensor telemetry (resting heart rate, HRV, nocturnal skin temperature, recovery cycles) with episodic clinical laboratory diagnostic records (blood chemistry panels, ECGs, prescriptions).
 
-[![CI/CD Pipeline](https://github.com/vigil-health/vigil/actions/workflows/ci.yml/badge.svg)](https://github.com/vigil-health/vigil/actions/workflows/ci.yml)
+[![CI/CD Pipeline](https://github.com/qianbie-hub/health/actions/workflows/ci.yml/badge.svg)](https://github.com/qianbie-hub/health/actions/workflows/ci.yml)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.110+-009688.svg?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
 [![React 19](https://img.shields.io/badge/React-19.2+-61DAFB.svg?logo=react&logoColor=black)](https://react.dev)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0+-3178C6.svg?logo=typescript&logoColor=white)](https://www.typescriptlang.org)

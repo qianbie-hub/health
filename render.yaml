@@ -1,0 +1,43 @@
+services:
+  # ========================================================
+  # Vigil FastAPI REST & SSE Streaming Backend Web Service
+  # ========================================================
+  - type: web
+    name: vigil-backend
+    env: python
+    region: oregon
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT --workers 2
+    healthCheckPath: /api/health
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: DEBUG
+        value: "false"
+      - key: SECRET_KEY
+        generateValue: true
+      - key: CORS_ORIGINS
+        value: "*"
+      - key: ACCESS_TOKEN_EXPIRE_MINUTES
+        value: "10080"
+
+  # ========================================================
+  # Vigil Vite + React 19 Frontend Static Web App
+  # ========================================================
+  - type: web
+    name: vigil-frontend
+    env: static
+    region: oregon
+    plan: free
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    routes:
+      - type: rewrite
+        source: /api/*
+        destination: https://vigil-backend.onrender.com/api/*
+      - type: rewrite
+        source: /*
+        destination: /index.html
