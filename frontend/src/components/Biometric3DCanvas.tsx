@@ -1,12 +1,21 @@
 import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 
-interface Biometric3DCanvasProps {
+export interface Biometric3DCanvasProps {
   className?: string;
+  mode?: 'vital' | 'molecular' | 'orbital';
 }
 
-export default function Biometric3DCanvas({ className = '' }: Biometric3DCanvasProps) {
+export default function Biometric3DCanvas({
+  className = '',
+  mode = 'vital',
+}: Biometric3DCanvasProps) {
   const mountRef = useRef<HTMLDivElement>(null);
+  const modeRef = useRef(mode);
+
+  useEffect(() => {
+    modeRef.current = mode;
+  }, [mode]);
 
   useEffect(() => {
     const container = mountRef.current;
@@ -14,7 +23,7 @@ export default function Biometric3DCanvas({ className = '' }: Biometric3DCanvasP
 
     // Scene setup
     const scene = new THREE.Scene();
-    
+
     // Camera setup
     const camera = new THREE.PerspectiveCamera(
       45,
@@ -25,7 +34,11 @@ export default function Biometric3DCanvas({ className = '' }: Biometric3DCanvasP
     camera.position.z = 4.8;
 
     // Renderer
-    const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true, powerPreference: 'high-performance' });
+    const renderer = new THREE.WebGLRenderer({
+      alpha: true,
+      antialias: true,
+      powerPreference: 'high-performance',
+    });
     renderer.setSize(container.clientWidth, container.clientHeight);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -38,7 +51,7 @@ export default function Biometric3DCanvas({ className = '' }: Biometric3DCanvasP
     // 1. Central Biometric Holographic Core (Wireframe Icosahedron)
     const coreGeo = new THREE.IcosahedronGeometry(1.2, 2);
     const coreMat = new THREE.MeshBasicMaterial({
-      color: 0x4A7BB0, // Tranquil Blue
+      color: 0x4a7bb0, // Tranquil Blue
       wireframe: true,
       transparent: true,
       opacity: 0.28,
@@ -49,7 +62,7 @@ export default function Biometric3DCanvas({ className = '' }: Biometric3DCanvasP
     // 2. Inner Glowing Heart-Node Mesh (Dense point sphere)
     const innerGeo = new THREE.IcosahedronGeometry(0.85, 3);
     const innerMat = new THREE.PointsMaterial({
-      color: 0x4A9671, // Soft Mint Green
+      color: 0x4a9671, // Soft Mint Green
       size: 0.045,
       transparent: true,
       opacity: 0.75,
@@ -58,10 +71,10 @@ export default function Biometric3DCanvas({ className = '' }: Biometric3DCanvasP
     const innerPoints = new THREE.Points(innerGeo, innerMat);
     mainGroup.add(innerPoints);
 
-    // 3. Orbital Sensor Rings (Representing Continuous Multi-Stream Telemetry)
+    // 3. Orbital Sensor Rings (Continuous Multi-Stream Telemetry)
     const ring1Geo = new THREE.TorusGeometry(1.65, 0.015, 16, 100);
     const ring1Mat = new THREE.MeshBasicMaterial({
-      color: 0x6FA4D4, // Tranquil Light
+      color: 0x6fa4d4, // Tranquil Light
       transparent: true,
       opacity: 0.55,
     });
@@ -72,7 +85,7 @@ export default function Biometric3DCanvas({ className = '' }: Biometric3DCanvasP
 
     const ring2Geo = new THREE.TorusGeometry(1.95, 0.012, 16, 100);
     const ring2Mat = new THREE.MeshBasicMaterial({
-      color: 0x92C6AB, // Mint Accent
+      color: 0x92c6ab, // Mint Accent
       transparent: true,
       opacity: 0.45,
     });
@@ -83,7 +96,7 @@ export default function Biometric3DCanvas({ className = '' }: Biometric3DCanvasP
 
     const ring3Geo = new THREE.TorusGeometry(2.2, 0.01, 16, 100);
     const ring3Mat = new THREE.MeshBasicMaterial({
-      color: 0xBAA5E2, // Lavender accent
+      color: 0xbaa5e2, // Lavender accent
       transparent: true,
       opacity: 0.35,
     });
@@ -92,7 +105,7 @@ export default function Biometric3DCanvas({ className = '' }: Biometric3DCanvasP
     ring3.rotation.z = Math.PI / 4;
     mainGroup.add(ring3);
 
-    // 4. Ambient Data Stream Particle Cloud (Molecular Biomarkers & Photoplethysmography pulses)
+    // 4. Ambient Data Stream Particle Cloud (Molecular Biomarkers & Pulses)
     const particleCount = 260;
     const particlePositions = new Float32Array(particleCount * 3);
     const particleColors = new Float32Array(particleCount * 3);
@@ -123,8 +136,14 @@ export default function Biometric3DCanvas({ className = '' }: Biometric3DCanvasP
     }
 
     const particlesGeo = new THREE.BufferGeometry();
-    particlesGeo.setAttribute('position', new THREE.BufferAttribute(particlePositions, 3));
-    particlesGeo.setAttribute('color', new THREE.BufferAttribute(particleColors, 3));
+    particlesGeo.setAttribute(
+      'position',
+      new THREE.BufferAttribute(particlePositions, 3)
+    );
+    particlesGeo.setAttribute(
+      'color',
+      new THREE.BufferAttribute(particleColors, 3)
+    );
 
     const particlesMat = new THREE.PointsMaterial({
       size: 0.04,
@@ -164,27 +183,33 @@ export default function Biometric3DCanvas({ className = '' }: Biometric3DCanvasP
 
     // Animation Loop with Biological Pulse Cadence (~70 bpm)
     let animationFrameId: number;
-    let clock = new THREE.Clock();
+    const startTime = performance.now();
 
     const animate = () => {
       animationFrameId = requestAnimationFrame(animate);
 
-      const elapsedTime = clock.getElapsedTime();
+      const elapsedTime = (performance.now() - startTime) * 0.001;
 
       // Smooth mouse follow
       mouseX += (targetX - mouseX) * 0.05;
       mouseY += (targetY - mouseY) * 0.05;
 
       mainGroup.rotation.y = elapsedTime * 0.22 + mouseX * 0.8;
-      mainGroup.rotation.x = Math.sin(elapsedTime * 0.15) * 0.15 + mouseY * 0.8;
+      mainGroup.rotation.x =
+        Math.sin(elapsedTime * 0.15) * 0.15 + mouseY * 0.8;
 
       // Slow orbital rotation for telemetry rings
-      ring1.rotation.z = elapsedTime * 0.35;
-      ring2.rotation.z = -elapsedTime * 0.28;
-      ring3.rotation.y = elapsedTime * 0.2;
+      const currentMode = modeRef.current;
+      const ringSpeed = currentMode === 'orbital' ? 0.6 : 0.35;
+      ring1.rotation.z = elapsedTime * ringSpeed;
+      ring2.rotation.z = -elapsedTime * (ringSpeed * 0.8);
+      ring3.rotation.y = elapsedTime * (ringSpeed * 0.6);
 
       // Pulse rhythm simulating cardiac baseline expansion
-      const pulse = 1 + Math.sin(elapsedTime * 3.8) * 0.045 + Math.sin(elapsedTime * 7.6) * 0.015;
+      const pulse =
+        1 +
+        Math.sin(elapsedTime * 3.8) * 0.045 +
+        Math.sin(elapsedTime * 7.6) * 0.015;
       coreMesh.scale.set(pulse, pulse, pulse);
       innerPoints.scale.set(pulse * 1.02, pulse * 1.02, pulse * 1.02);
 

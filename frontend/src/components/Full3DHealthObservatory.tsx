@@ -4,15 +4,13 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Heart,
-  Activity,
-  Sparkles,
-  ArrowRight,
-  Layers,
+  Moon,
+  Zap,
   HeartPulse,
   Maximize2,
   Minimize2,
-  Zap,
-  CheckCircle2
+  ArrowRight,
+  CheckCircle2,
 } from 'lucide-react';
 import { fluidEase } from '../animations';
 
@@ -20,266 +18,219 @@ interface Full3DHealthObservatoryProps {
   onOpenAuth: (mode?: 'signin' | 'signup') => void;
 }
 
-type ViewMode = 'holistic' | 'cardiac' | 'metabolic' | 'circadian';
+type StreamMode = 'cardiac' | 'circadian' | 'metabolic';
 
 export default function Full3DHealthObservatory({ onOpenAuth }: Full3DHealthObservatoryProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const [activeView, setActiveView] = useState<ViewMode>('holistic');
+  const [activeStream, setActiveStream] = useState<StreamMode>('cardiac');
   const [pulseBpm, setPulseBpm] = useState<number>(72);
-  const [renderMode, setRenderMode] = useState<'hologram' | 'particles' | 'wireframe'>('hologram');
   const [isFullscreen, setIsFullscreen] = useState(false);
 
   // References to communicate between React state and Three.js animation loop
-  const sceneParamsRef = useRef({
+  const paramsRef = useRef({
     bpm: 72,
-    renderMode: 'hologram',
-    targetCameraPos: new THREE.Vector3(0, 0.4, 5.2),
-    targetLookAt: new THREE.Vector3(0, 0, 0),
+    activeStream: 'cardiac' as StreamMode,
   });
 
   useEffect(() => {
-    sceneParamsRef.current.bpm = pulseBpm;
+    paramsRef.current.bpm = pulseBpm;
   }, [pulseBpm]);
 
   useEffect(() => {
-    sceneParamsRef.current.renderMode = renderMode;
-  }, [renderMode]);
-
-  // Adjust camera targets based on active view mode
-  useEffect(() => {
-    if (activeView === 'holistic') {
-      sceneParamsRef.current.targetCameraPos.set(0, 0.4, 5.4);
-      sceneParamsRef.current.targetLookAt.set(0, 0, 0);
-    } else if (activeView === 'cardiac') {
-      sceneParamsRef.current.targetCameraPos.set(0, 0.35, 2.7);
-      sceneParamsRef.current.targetLookAt.set(0, 0.35, 0);
-    } else if (activeView === 'metabolic') {
-      sceneParamsRef.current.targetCameraPos.set(1.4, -0.2, 3.2);
-      sceneParamsRef.current.targetLookAt.set(0.3, -0.2, 0);
-    } else if (activeView === 'circadian') {
-      sceneParamsRef.current.targetCameraPos.set(-1.6, 0.6, 3.8);
-      sceneParamsRef.current.targetLookAt.set(-0.2, 0.2, 0);
-    }
-  }, [activeView]);
+    paramsRef.current.activeStream = activeStream;
+  }, [activeStream]);
 
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
 
-    // 1. Three.js Scene Setup
+    // 1. Scene & Camera Setup
     const scene = new THREE.Scene();
-    scene.fog = new THREE.FogExp2(0xE8ECEF, 0.045);
+    scene.fog = new THREE.FogExp2(0xe8ecef, 0.035);
 
-    // 2. Camera Setup
     const camera = new THREE.PerspectiveCamera(
       45,
       container.clientWidth / container.clientHeight,
       0.1,
       100
     );
-    camera.position.set(0, 0.4, 5.4);
+    camera.position.set(0, 0.2, 5.0);
 
-    // 3. WebGL Renderer
-    const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true, powerPreference: 'high-performance' });
+    // 2. WebGL Renderer
+    const renderer = new THREE.WebGLRenderer({
+      alpha: true,
+      antialias: true,
+      powerPreference: 'high-performance',
+    });
     renderer.setSize(container.clientWidth, container.clientHeight);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.outputColorSpace = THREE.SRGBColorSpace;
-    renderer.shadowMap.enabled = false;
     container.appendChild(renderer.domElement);
 
-    // 4. OrbitControls
+    // 3. OrbitControls (Smooth, dampened 360° inspection)
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.dampingFactor = 0.05;
-    controls.maxDistance = 8.5;
-    controls.minDistance = 2.0;
+    controls.maxDistance = 7.0;
+    controls.minDistance = 2.4;
     controls.maxPolarAngle = Math.PI / 1.7;
     controls.minPolarAngle = Math.PI / 4.5;
     controls.enablePan = false;
 
-    // 5. Lighting
-    const ambientLight = new THREE.AmbientLight(0xFFFFFF, 1.4);
+    // 4. Studio Lighting (Clinical, soft, modern)
+    const ambientLight = new THREE.AmbientLight(0xffffff, 1.4);
     scene.add(ambientLight);
 
-    const dirLight1 = new THREE.DirectionalLight(0x4A7BB0, 2.5); // Tranquil Blue
-    dirLight1.position.set(5, 8, 5);
-    scene.add(dirLight1);
+    const keyLight = new THREE.DirectionalLight(0xffffff, 2.0);
+    keyLight.position.set(4, 6, 4);
+    scene.add(keyLight);
 
-    const dirLight2 = new THREE.DirectionalLight(0x4A9671, 2.0); // Soft Mint
-    dirLight2.position.set(-5, -4, -3);
-    scene.add(dirLight2);
+    const fillLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    fillLight.position.set(-3, -2, 2);
+    scene.add(fillLight);
 
-    const pointLightHeart = new THREE.PointLight(0xE07E56, 3.0, 5); // Terracotta heart glow
-    pointLightHeart.position.set(0, 0.35, 0.2);
-    scene.add(pointLightHeart);
+    const rimLight = new THREE.DirectionalLight(0x4a7bb0, 1.6);
+    rimLight.position.set(-4, 3, -4);
+    scene.add(rimLight);
 
-    // 6. Master Model Group
-    const modelGroup = new THREE.Group();
-    scene.add(modelGroup);
+    const coreLight = new THREE.PointLight(0xe07e56, 2.5, 5);
+    coreLight.position.set(0, 0, 0);
+    scene.add(coreLight);
 
-    // -------------------------------------------------------------
-    // ANATOMICAL PHYSIOLOGICAL SILHOUETTE & BIOMETRIC TWIN
-    // -------------------------------------------------------------
+    // 5. Master 3D Group
+    const masterGroup = new THREE.Group();
+    scene.add(masterGroup);
 
-    // A. Torso Translucent Mannequin Wireframe (Curved Lathe / Cylinder)
-    const torsoPoints: THREE.Vector2[] = [];
-    torsoPoints.push(new THREE.Vector2(0.55, 1.4)); // Neck
-    torsoPoints.push(new THREE.Vector2(1.15, 1.1)); // Shoulders
-    torsoPoints.push(new THREE.Vector2(0.95, 0.5)); // Chest
-    torsoPoints.push(new THREE.Vector2(0.85, 0.0)); // Diaphragm
-    torsoPoints.push(new THREE.Vector2(0.78, -0.6)); // Abdomen
-    torsoPoints.push(new THREE.Vector2(0.92, -1.2)); // Pelvis
-    torsoPoints.push(new THREE.Vector2(0.5, -1.5)); // Base
+    // -----------------------------------------------------------------
+    // THE VITAL BIOMETRIC CORE (Minimal, Clinical, Professional)
+    // -----------------------------------------------------------------
 
-    const torsoGeo = new THREE.LatheGeometry(torsoPoints, 32);
-    const torsoMat = new THREE.MeshStandardMaterial({
-      color: 0x4A7BB0,
-      wireframe: true,
+    // Outer Translucent Glass Biosphere
+    const outerSphereGeo = new THREE.SphereGeometry(1.05, 48, 48);
+    const outerSphereMat = new THREE.MeshPhysicalMaterial({
+      color: 0x4a7bb0,
+      roughness: 0.18,
+      metalness: 0.05,
+      clearcoat: 0.8,
+      clearcoatRoughness: 0.1,
+      transmission: 0.45,
       transparent: true,
-      opacity: 0.16,
-      roughness: 0.2,
+      opacity: 0.5,
+    });
+    const outerSphere = new THREE.Mesh(outerSphereGeo, outerSphereMat);
+    masterGroup.add(outerSphere);
+
+    // Inner Glowing Physiological Core Node
+    const innerCoreGeo = new THREE.SphereGeometry(0.58, 32, 32);
+    const innerCoreMat = new THREE.MeshStandardMaterial({
+      color: 0xe07e56,
+      emissive: 0xc8663d,
+      emissiveIntensity: 0.55,
+      roughness: 0.25,
       metalness: 0.1,
     });
-    const torsoMesh = new THREE.Mesh(torsoGeo, torsoMat);
-    modelGroup.add(torsoMesh);
+    const innerCore = new THREE.Mesh(innerCoreGeo, innerCoreMat);
+    masterGroup.add(innerCore);
 
-    // B. Central Cardiac Core Node (Resting HR & Autonomic Vagal Tone)
-    const heartGeo = new THREE.IcosahedronGeometry(0.38, 2);
-    const heartMat = new THREE.MeshStandardMaterial({
-      color: 0xE07E56, // Terracotta / Peach pulse
-      roughness: 0.3,
-      metalness: 0.2,
-      emissive: 0xC8663D,
-      emissiveIntensity: 0.4,
-      wireframe: false,
+    // Concentric Cardiac Pulse Ripple Ring
+    const pulseRingGeo = new THREE.TorusGeometry(1.2, 0.008, 16, 64);
+    const pulseRingMat = new THREE.MeshBasicMaterial({
+      color: 0xe07e56,
+      transparent: true,
+      opacity: 0.5,
     });
-    const heartMesh = new THREE.Mesh(heartGeo, heartMat);
-    heartMesh.position.set(0, 0.35, 0.15);
-    modelGroup.add(heartMesh);
+    const pulseRing = new THREE.Mesh(pulseRingGeo, pulseRingMat);
+    masterGroup.add(pulseRing);
 
-    // Heart Outer Aura Mesh
-    const heartAuraGeo = new THREE.IcosahedronGeometry(0.52, 1);
-    const heartAuraMat = new THREE.MeshBasicMaterial({
-      color: 0xF7C7B2,
-      wireframe: true,
+    // -----------------------------------------------------------------
+    // 3 CLEAN TELEMETRY ORBITAL TRACKS
+    // -----------------------------------------------------------------
+
+    // Track 1: Cardiovascular Telemetry (Tranquil Blue)
+    const track1Geo = new THREE.TorusGeometry(1.6, 0.009, 16, 100);
+    const track1Mat = new THREE.MeshBasicMaterial({
+      color: 0x4a7bb0,
+      transparent: true,
+      opacity: 0.55,
+    });
+    const track1 = new THREE.Mesh(track1Geo, track1Mat);
+    track1.rotation.x = Math.PI / 3;
+    track1.rotation.y = Math.PI / 8;
+    masterGroup.add(track1);
+
+    // Sensor Node orbiting Track 1 (Smartwatch stream)
+    const node1Geo = new THREE.SphereGeometry(0.045, 16, 16);
+    const node1Mat = new THREE.MeshBasicMaterial({ color: 0x4a7bb0 });
+    const node1 = new THREE.Mesh(node1Geo, node1Mat);
+    masterGroup.add(node1);
+
+    // Track 2: Circadian Sleep & Recovery (Soft Mint)
+    const track2Geo = new THREE.TorusGeometry(1.95, 0.007, 16, 100);
+    const track2Mat = new THREE.MeshBasicMaterial({
+      color: 0x4a9671,
+      transparent: true,
+      opacity: 0.45,
+    });
+    const track2 = new THREE.Mesh(track2Geo, track2Mat);
+    track2.rotation.x = -Math.PI / 3.5;
+    track2.rotation.y = Math.PI / 4;
+    masterGroup.add(track2);
+
+    // Node orbiting Track 2
+    const node2Geo = new THREE.SphereGeometry(0.04, 16, 16);
+    const node2Mat = new THREE.MeshBasicMaterial({ color: 0x4a9671 });
+    const node2 = new THREE.Mesh(node2Geo, node2Mat);
+    masterGroup.add(node2);
+
+    // Track 3: Diagnostic Lab Panels (Tranquil Lavender)
+    const track3Geo = new THREE.TorusGeometry(2.3, 0.006, 16, 100);
+    const track3Mat = new THREE.MeshBasicMaterial({
+      color: 0xbaa5e2,
       transparent: true,
       opacity: 0.35,
     });
-    const heartAuraMesh = new THREE.Mesh(heartAuraGeo, heartAuraMat);
-    heartAuraMesh.position.set(0, 0.35, 0.15);
-    modelGroup.add(heartAuraMesh);
+    const track3 = new THREE.Mesh(track3Geo, track3Mat);
+    track3.rotation.x = Math.PI / 2.2;
+    track3.rotation.z = Math.PI / 5;
+    masterGroup.add(track3);
 
-    // C. Vascular / Arterial Energy Loops (Connecting Continuous Telemetry)
-    const arterialCurve1 = new THREE.CatmullRomCurve3([
-      new THREE.Vector3(0, 0.35, 0.15),
-      new THREE.Vector3(0.5, 0.8, 0.2),
-      new THREE.Vector3(0.9, 0.4, 0.1),
-      new THREE.Vector3(0.6, -0.4, 0.2),
-      new THREE.Vector3(0, -1.0, 0.1),
-      new THREE.Vector3(-0.6, -0.4, 0.2),
-      new THREE.Vector3(-0.9, 0.4, 0.1),
-      new THREE.Vector3(-0.5, 0.8, 0.2),
-      new THREE.Vector3(0, 0.35, 0.15),
-    ]);
-    const arterialGeo1 = new THREE.TubeGeometry(arterialCurve1, 80, 0.016, 8, true);
-    const arterialMat1 = new THREE.MeshBasicMaterial({
-      color: 0x4A7BB0, // Tranquil Blue
-      transparent: true,
-      opacity: 0.65,
-    });
-    const arterialMesh1 = new THREE.Mesh(arterialGeo1, arterialMat1);
-    modelGroup.add(arterialMesh1);
+    // Node orbiting Track 3
+    const node3Geo = new THREE.SphereGeometry(0.038, 16, 16);
+    const node3Mat = new THREE.MeshBasicMaterial({ color: 0xbaa5e2 });
+    const node3 = new THREE.Mesh(node3Geo, node3Mat);
+    masterGroup.add(node3);
 
-    // D. Molecular Biomarker Cluster (Representing Lab OCR Ingestion: hs-CRP, LDL, Glucose)
-    const biomarkerCount = 140;
-    const biomarkerGeo = new THREE.BufferGeometry();
-    const biomarkerPositions = new Float32Array(biomarkerCount * 3);
-    const biomarkerColors = new Float32Array(biomarkerCount * 3);
+    // Delicate background constellation (Minimal, 100 particles)
+    const particleCount = 100;
+    const particleGeo = new THREE.BufferGeometry();
+    const particlePositions = new Float32Array(particleCount * 3);
 
-    const cMint = new THREE.Color('#4A9671');
-    const cBlue = new THREE.Color('#4A7BB0');
-    const cAmber = new THREE.Color('#E07E56');
+    for (let i = 0; i < particleCount; i++) {
+      const radius = 1.8 + Math.random() * 1.8;
+      const theta = THREE.MathUtils.randFloatSpread(360);
+      const phi = THREE.MathUtils.randFloatSpread(360);
 
-    for (let i = 0; i < biomarkerCount; i++) {
-      // Clustered around hepatic/metabolic region (y: -0.2 to 0.1, x: -0.5 to 0.5)
-      const u = Math.random();
-      const radius = 0.2 + Math.random() * 0.65;
-      const angle = Math.random() * Math.PI * 2;
-      const y = -0.4 + Math.random() * 0.8;
-
-      biomarkerPositions[i * 3] = Math.cos(angle) * radius;
-      biomarkerPositions[i * 3 + 1] = y;
-      biomarkerPositions[i * 3 + 2] = Math.sin(angle) * radius * 0.6 + 0.1;
-
-      const col = u < 0.45 ? cMint : u < 0.8 ? cBlue : cAmber;
-      biomarkerColors[i * 3] = col.r;
-      biomarkerColors[i * 3 + 1] = col.g;
-      biomarkerColors[i * 3 + 2] = col.b;
+      particlePositions[i * 3] = radius * Math.sin(theta) * Math.cos(phi);
+      particlePositions[i * 3 + 1] = radius * Math.sin(theta) * Math.sin(phi);
+      particlePositions[i * 3 + 2] = radius * Math.cos(theta);
     }
 
-    biomarkerGeo.setAttribute('position', new THREE.BufferAttribute(biomarkerPositions, 3));
-    biomarkerGeo.setAttribute('color', new THREE.BufferAttribute(biomarkerColors, 3));
-
-    const biomarkerMat = new THREE.PointsMaterial({
-      size: 0.055,
-      vertexColors: true,
+    particleGeo.setAttribute('position', new THREE.BufferAttribute(particlePositions, 3));
+    const particleMat = new THREE.PointsMaterial({
+      color: 0x4a7bb0,
+      size: 0.025,
       transparent: true,
-      opacity: 0.85,
-      blending: THREE.AdditiveBlending,
+      opacity: 0.35,
     });
-    const biomarkerPoints = new THREE.Points(biomarkerGeo, biomarkerMat);
-    modelGroup.add(biomarkerPoints);
+    const particles = new THREE.Points(particleGeo, particleMat);
+    masterGroup.add(particles);
 
-    // E. Circadian Thermoregulation & Sleep Rings (Multi-tier Telemetry Orbitals)
-    const orbitalGroup = new THREE.Group();
-    modelGroup.add(orbitalGroup);
+    // Colors for smooth stream transition
+    const cardiacColor = new THREE.Color('#E07E56');
+    const circadianColor = new THREE.Color('#4A9671');
+    const metabolicColor = new THREE.Color('#BAA5E2');
 
-    const ringGeo1 = new THREE.TorusGeometry(1.5, 0.012, 16, 90);
-    const ringMat1 = new THREE.MeshBasicMaterial({ color: 0x6FA4D4, transparent: true, opacity: 0.5 });
-    const ringMesh1 = new THREE.Mesh(ringGeo1, ringMat1);
-    ringMesh1.rotation.x = Math.PI / 2.3;
-    orbitalGroup.add(ringMesh1);
-
-    const ringGeo2 = new THREE.TorusGeometry(1.85, 0.01, 16, 90);
-    const ringMat2 = new THREE.MeshBasicMaterial({ color: 0x92C6AB, transparent: true, opacity: 0.4 });
-    const ringMesh2 = new THREE.Mesh(ringGeo2, ringMat2);
-    ringMesh2.rotation.x = -Math.PI / 3;
-    ringMesh2.rotation.y = Math.PI / 5;
-    orbitalGroup.add(ringMesh2);
-
-    const ringGeo3 = new THREE.TorusGeometry(2.15, 0.008, 16, 90);
-    const ringMat3 = new THREE.MeshBasicMaterial({ color: 0xBAA5E2, transparent: true, opacity: 0.35 });
-    const ringMesh3 = new THREE.Mesh(ringGeo3, ringMat3);
-    ringMesh3.rotation.z = Math.PI / 4;
-    ringMesh3.rotation.y = Math.PI / 2.2;
-    orbitalGroup.add(ringMesh3);
-
-    // F. Ambient Floating Data Particles (Constellation of 280 particles)
-    const ambientCount = 280;
-    const ambientGeo = new THREE.BufferGeometry();
-    const ambientPos = new Float32Array(ambientCount * 3);
-
-    for (let i = 0; i < ambientCount; i++) {
-      const rad = 1.4 + Math.random() * 2.2;
-      const theta = Math.random() * Math.PI * 2;
-      const phi = (Math.random() - 0.5) * Math.PI;
-
-      ambientPos[i * 3] = rad * Math.cos(phi) * Math.cos(theta);
-      ambientPos[i * 3 + 1] = rad * Math.sin(phi);
-      ambientPos[i * 3 + 2] = rad * Math.cos(phi) * Math.sin(theta);
-    }
-    ambientGeo.setAttribute('position', new THREE.BufferAttribute(ambientPos, 3));
-    const ambientMat = new THREE.PointsMaterial({
-      color: 0x4A7BB0,
-      size: 0.035,
-      transparent: true,
-      opacity: 0.45,
-      blending: THREE.AdditiveBlending,
-    });
-    const ambientParticles = new THREE.Points(ambientGeo, ambientMat);
-    modelGroup.add(ambientParticles);
-
-    // 7. Resize Handler
+    // 6. Resize Handler
     const handleResize = () => {
       if (!container) return;
       camera.aspect = container.clientWidth / container.clientHeight;
@@ -288,60 +239,75 @@ export default function Full3DHealthObservatory({ onOpenAuth }: Full3DHealthObse
     };
     window.addEventListener('resize', handleResize);
 
-    // 8. Animation Loop
+    // 7. Animation Loop
     let animId: number;
-    const clock = new THREE.Clock();
+    const startTime = performance.now();
 
     const animate = () => {
       animId = requestAnimationFrame(animate);
 
-      const elapsed = clock.getElapsedTime();
-      const currentBpm = sceneParamsRef.current.bpm;
-      const pulseFrequency = (currentBpm / 60) * Math.PI * 2;
+      const now = performance.now();
+      const elapsed = (now - startTime) * 0.001;
+      const currentBpm = paramsRef.current.bpm;
+      const bps = currentBpm / 60;
 
-      // Camera lerp towards target position and lookAt
-      camera.position.lerp(sceneParamsRef.current.targetCameraPos, 0.04);
-      controls.target.lerp(sceneParamsRef.current.targetLookAt, 0.04);
       controls.update();
 
-      // Slow gentle model yaw rotation
-      modelGroup.rotation.y = elapsed * 0.12;
+      // Slow, serene planetary yaw rotation
+      masterGroup.rotation.y = elapsed * 0.12;
 
-      // Heart Cardiac Pulse Expansion (Synchronized with selected BPM)
-      const heartPulse = 1 + Math.sin(elapsed * pulseFrequency) * 0.09 + Math.sin(elapsed * pulseFrequency * 2) * 0.03;
-      heartMesh.scale.set(heartPulse, heartPulse, heartPulse);
-      heartAuraMesh.scale.set(heartPulse * 1.05, heartPulse * 1.05, heartPulse * 1.05);
-      pointLightHeart.intensity = 2.0 + Math.sin(elapsed * pulseFrequency) * 1.5;
-
-      // Orbital Rings Rotation
-      ringMesh1.rotation.z = elapsed * 0.25;
-      ringMesh2.rotation.z = -elapsed * 0.2;
-      ringMesh3.rotation.x = elapsed * 0.15;
-
-      // Biomarker Molecular Cloud gentle vortex
-      biomarkerPoints.rotation.y = -elapsed * 0.35;
-
-      // Render mode adjustments
-      const currentMode = sceneParamsRef.current.renderMode;
-      if (currentMode === 'wireframe') {
-        torsoMat.wireframe = true;
-        torsoMat.opacity = 0.25;
-        heartMesh.visible = false;
-        heartAuraMesh.visible = true;
-        biomarkerPoints.visible = false;
-      } else if (currentMode === 'particles') {
-        torsoMat.wireframe = true;
-        torsoMat.opacity = 0.06;
-        heartMesh.visible = false;
-        heartAuraMesh.visible = true;
-        biomarkerPoints.visible = true;
-      } else {
-        torsoMat.wireframe = true;
-        torsoMat.opacity = 0.16;
-        heartMesh.visible = true;
-        heartAuraMesh.visible = true;
-        biomarkerPoints.visible = true;
+      // Organic cardiac heartbeat rhythm
+      const cycle = (elapsed * bps) % 1;
+      let pulseBeat = 0;
+      if (cycle < 0.14) {
+        pulseBeat = Math.sin((cycle / 0.14) * Math.PI) * 0.14;
+      } else if (cycle > 0.18 && cycle < 0.32) {
+        pulseBeat = Math.sin(((cycle - 0.18) / 0.14) * Math.PI) * 0.07;
       }
+
+      // Smooth inner core & light pulse
+      const coreScale = 1.0 + pulseBeat;
+      innerCore.scale.setScalar(coreScale);
+      outerSphere.scale.setScalar(1.0 + pulseBeat * 0.35);
+      coreLight.intensity = 1.8 + pulseBeat * 3.5;
+
+      // Pulse wave ripple expanding outward
+      pulseRing.scale.setScalar(1.0 + cycle * 0.9);
+      pulseRingMat.opacity = Math.max(0, (1 - cycle) * 0.45);
+
+      // Orbital rotations for telemetry tracks
+      track1.rotation.z = elapsed * 0.25;
+      track2.rotation.z = -elapsed * 0.2;
+      track3.rotation.y = elapsed * 0.15;
+
+      // Orbiting satellite nodes along tracks
+      const a1 = elapsed * 0.6;
+      node1.position.x = Math.cos(a1) * 1.6 * Math.cos(Math.PI / 8);
+      node1.position.y = Math.sin(a1) * 1.6 * Math.cos(Math.PI / 3);
+      node1.position.z = Math.sin(a1) * 1.6 * Math.sin(Math.PI / 3);
+
+      const a2 = -elapsed * 0.5;
+      node2.position.x = Math.cos(a2) * 1.95 * Math.cos(Math.PI / 4);
+      node2.position.y = Math.sin(a2) * 1.95 * Math.cos(-Math.PI / 3.5);
+      node2.position.z = Math.sin(a2) * 1.95 * Math.sin(-Math.PI / 3.5);
+
+      const a3 = elapsed * 0.4;
+      node3.position.x = Math.cos(a3) * 2.3 * Math.cos(Math.PI / 5);
+      node3.position.y = Math.sin(a3) * 2.3 * Math.sin(Math.PI / 2.2);
+      node3.position.z = Math.sin(a3) * 2.3 * Math.cos(Math.PI / 2.2);
+
+      // Smooth color interpolation based on active stream
+      const targetColor =
+        paramsRef.current.activeStream === 'circadian'
+          ? circadianColor
+          : paramsRef.current.activeStream === 'metabolic'
+          ? metabolicColor
+          : cardiacColor;
+
+      innerCoreMat.color.lerp(targetColor, 0.05);
+
+      // Particles gentle breathing
+      particles.rotation.y = -elapsed * 0.08;
 
       renderer.render(scene, camera);
     };
@@ -356,31 +322,35 @@ export default function Full3DHealthObservatory({ onOpenAuth }: Full3DHealthObse
         container.removeChild(renderer.domElement);
       }
       renderer.dispose();
-      torsoGeo.dispose();
-      torsoMat.dispose();
-      heartGeo.dispose();
-      heartMat.dispose();
-      heartAuraGeo.dispose();
-      heartAuraMat.dispose();
-      arterialGeo1.dispose();
-      arterialMat1.dispose();
-      biomarkerGeo.dispose();
-      biomarkerMat.dispose();
-      ringGeo1.dispose();
-      ringMat1.dispose();
-      ringGeo2.dispose();
-      ringMat2.dispose();
-      ringGeo3.dispose();
-      ringMat3.dispose();
-      ambientGeo.dispose();
-      ambientMat.dispose();
+      outerSphereGeo.dispose();
+      outerSphereMat.dispose();
+      innerCoreGeo.dispose();
+      innerCoreMat.dispose();
+      pulseRingGeo.dispose();
+      pulseRingMat.dispose();
+      track1Geo.dispose();
+      track1Mat.dispose();
+      track2Geo.dispose();
+      track2Mat.dispose();
+      track3Geo.dispose();
+      track3Mat.dispose();
+      node1Geo.dispose();
+      node1Mat.dispose();
+      node2Geo.dispose();
+      node2Mat.dispose();
+      node3Geo.dispose();
+      node3Mat.dispose();
+      particleGeo.dispose();
+      particleMat.dispose();
     };
   }, []);
 
   return (
     <div
       className={`relative w-full rounded-3xl overflow-hidden border border-[#DCE2EA] shadow-float bg-gradient-to-b from-white via-[#F8FAFC] to-[#E8ECEF] transition-all duration-500 ${
-        isFullscreen ? 'fixed inset-4 z-50 rounded-2xl shadow-2xl' : 'min-h-[640px] sm:min-h-[720px] lg:min-h-[780px]'
+        isFullscreen
+          ? 'fixed inset-4 z-50 rounded-2xl shadow-2xl'
+          : 'min-h-[580px] sm:min-h-[660px]'
       }`}
     >
       {/* 3D WebGL Canvas Layer */}
@@ -389,51 +359,27 @@ export default function Full3DHealthObservatory({ onOpenAuth }: Full3DHealthObse
         className="absolute inset-0 w-full h-full cursor-grab active:cursor-grabbing z-0"
       />
 
-      {/* ==================== SPATIAL 3D HUD OVERLAY ==================== */}
-
-      {/* Top Left: Platform 3D Title & Stream Badges */}
-      <div className="absolute top-5 left-5 z-20 space-y-2 pointer-events-none">
-        <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-white/90 backdrop-blur-md border border-[#DCE2EA] shadow-xs text-xs">
-          <div className="w-2.5 h-2.5 rounded-full bg-softMint-500 animate-ping" />
-          <span className="font-semibold text-slateInk-900 tracking-wide font-mono text-[11px]">
-            SPATIAL BIOMETRIC OBSERVATORY
+      {/* Top Left: Clean, Minimal Title */}
+      <div className="absolute top-5 left-5 z-20 space-y-1.5 pointer-events-none">
+        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/90 backdrop-blur-md border border-[#DCE2EA] shadow-xs text-xs">
+          <div className="w-2 h-2 rounded-full bg-softMint-500 animate-ping" />
+          <span className="font-semibold text-slateInk-900 tracking-wider font-mono text-[10px] uppercase">
+            3D Physiological Core
           </span>
           <span className="text-slateInk-300">•</span>
-          <span className="text-[10px] text-tranquil-700 font-medium">3D Neural Twin</span>
+          <span className="text-[10px] text-tranquil-700 font-medium">Live Telemetry</span>
         </div>
 
         <h3 className="font-serif text-2xl sm:text-3xl font-normal text-slateInk-900 drop-shadow-xs">
           How Vigil Maps Your Biology
         </h3>
         <p className="text-xs text-slateInk-600 max-w-sm drop-shadow-xs">
-          Drag to orbit 360°. Zoom to inspect how continuous sensor streams correlate with clinical lab biomarkers.
+          Drag to inspect 360°. Continuous wearable telemetry harmonized with clinical laboratory records.
         </p>
       </div>
 
-      {/* Top Right: View Switchers & Fullscreen Button */}
-      <div className="absolute top-5 right-5 z-20 flex items-center space-x-2">
-        {/* Render mode selector */}
-        <div className="hidden sm:flex bg-white/85 backdrop-blur-md p-1 rounded-2xl border border-[#DCE2EA] shadow-xs text-xs font-semibold">
-          {[
-            { id: 'hologram', label: 'Hologram' },
-            { id: 'particles', label: 'Biomarkers' },
-            { id: 'wireframe', label: 'Wireframe' },
-          ].map((m) => (
-            <button
-              key={m.id}
-              onClick={() => setRenderMode(m.id as any)}
-              className={`px-3 py-1.5 rounded-xl transition-all cursor-pointer ${
-                renderMode === m.id
-                  ? 'bg-slateInk-900 text-white shadow-xs'
-                  : 'text-slateInk-600 hover:text-slateInk-900'
-              }`}
-            >
-              {m.label}
-            </button>
-          ))}
-        </div>
-
-        {/* Fullscreen Expand Button */}
+      {/* Top Right: Fullscreen Button */}
+      <div className="absolute top-5 right-5 z-20">
         <button
           onClick={() => setIsFullscreen(!isFullscreen)}
           className="p-2.5 rounded-2xl bg-white/85 hover:bg-white backdrop-blur-md border border-[#DCE2EA] text-slateInk-700 hover:text-slateInk-900 shadow-xs transition-colors cursor-pointer"
@@ -443,28 +389,31 @@ export default function Full3DHealthObservatory({ onOpenAuth }: Full3DHealthObse
         </button>
       </div>
 
-      {/* Bottom Center: Camera Focal Views (Stream Selector) */}
+      {/* Bottom Center: Minimal 3-Stream Selector */}
       <div className="absolute bottom-6 inset-x-4 sm:inset-x-auto sm:left-1/2 sm:-translate-x-1/2 z-20 flex justify-center">
-        <div className="bg-white/90 backdrop-blur-xl p-1.5 rounded-2xl border border-[#DCE2EA] shadow-card flex flex-wrap justify-center gap-1.5 max-w-xl">
+        <div className="bg-white/95 backdrop-blur-xl p-1.5 rounded-2xl border border-[#DCE2EA] shadow-card flex items-center gap-1.5">
           {[
-            { id: 'holistic', label: 'Holistic Twin', icon: Layers },
-            { id: 'cardiac', label: 'Cardiovascular Stream', icon: Heart },
-            { id: 'metabolic', label: 'Lab Biomarkers', icon: Zap },
-            { id: 'circadian', label: 'Circadian Orbits', icon: Activity },
+            { id: 'cardiac' as StreamMode, label: 'Cardiac Rhythm', icon: Heart },
+            { id: 'circadian' as StreamMode, label: 'Sleep Recovery', icon: Moon },
+            { id: 'metabolic' as StreamMode, label: 'Lab Biomarkers', icon: Zap },
           ].map((tab) => {
             const Icon = tab.icon;
-            const isActive = activeView === tab.id;
+            const isActive = activeStream === tab.id;
             return (
               <button
                 key={tab.id}
-                onClick={() => setActiveView(tab.id as any)}
+                onClick={() => setActiveStream(tab.id)}
                 className={`flex items-center space-x-2 px-3.5 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
                   isActive
-                    ? 'bg-tranquil-600 text-white shadow-soft scale-102'
+                    ? 'bg-slateInk-900 text-white shadow-soft scale-102'
                     : 'text-slateInk-700 hover:bg-slate-100 hover:text-slateInk-900'
                 }`}
               >
-                <Icon className={`w-3.5 h-3.5 ${isActive ? 'text-softMint-300' : 'text-slateInk-500'}`} />
+                <Icon
+                  className={`w-3.5 h-3.5 ${
+                    isActive ? 'text-softMint-300' : 'text-slateInk-500'
+                  }`}
+                />
                 <span>{tab.label}</span>
               </button>
             );
@@ -472,13 +421,13 @@ export default function Full3DHealthObservatory({ onOpenAuth }: Full3DHealthObse
         </div>
       </div>
 
-      {/* Bottom Left: Interactive Heartbeat BPM Scrubber */}
+      {/* Bottom Left: Cardiac Cadence Slider */}
       <div className="absolute bottom-6 left-5 z-20 hidden md:block">
-        <div className="p-4 rounded-2xl bg-white/90 backdrop-blur-xl border border-[#DCE2EA] shadow-card space-y-2.5 w-64">
+        <div className="p-3.5 rounded-2xl bg-white/90 backdrop-blur-xl border border-[#DCE2EA] shadow-card space-y-2 w-56">
           <div className="flex items-center justify-between text-xs">
             <span className="font-semibold text-slateInk-800 flex items-center gap-1.5">
-              <HeartPulse className="w-4 h-4 text-peach-600 animate-pulse-soft" />
-              <span>Simulate Cardiac Cadence</span>
+              <HeartPulse className="w-3.5 h-3.5 text-peach-600 animate-pulse-soft" />
+              <span>Simulate Cadence</span>
             </span>
             <span className="font-mono font-bold text-tranquil-700 text-xs">{pulseBpm} BPM</span>
           </div>
@@ -486,82 +435,75 @@ export default function Full3DHealthObservatory({ onOpenAuth }: Full3DHealthObse
           <input
             type="range"
             min="50"
-            max="120"
+            max="110"
             step="1"
             value={pulseBpm}
             onChange={(e) => setPulseBpm(Number(e.target.value))}
             className="w-full accent-tranquil-600 cursor-pointer h-1.5 bg-slate-200 rounded-lg"
           />
 
-          <div className="flex justify-between text-[10px] text-slateInk-400 font-mono">
-            <span>50 (Nocturnal)</span>
-            <span>72 (Baseline)</span>
-            <span>120 (Strain)</span>
+          <div className="flex justify-between text-[9px] text-slateInk-400 font-mono">
+            <span>50 Rest</span>
+            <span>72 Baseline</span>
+            <span>110 Active</span>
           </div>
         </div>
       </div>
 
-      {/* Bottom Right: Call To Action to Unlock Personal Model */}
-      <div className="absolute bottom-6 right-5 z-20 hidden lg:block">
-        <div className="p-4 rounded-2xl bg-white/90 backdrop-blur-xl border border-[#DCE2EA] shadow-card space-y-2 max-w-xs text-right">
-          <div className="text-[11px] font-semibold text-slateInk-700">
-            Ready to calibrate your real telemetry?
-          </div>
-          <p className="text-[10px] text-slateInk-500 leading-tight">
-            Sign up to link Apple Health, Oura, and blood reports to your private encrypted twin.
-          </p>
-          <button
-            onClick={() => onOpenAuth('signup')}
-            className="inline-flex items-center space-x-1.5 px-3.5 py-1.5 rounded-xl bg-tranquil-600 hover:bg-tranquil-700 text-white text-xs font-semibold shadow-soft transition-all cursor-pointer mt-1"
-          >
-            <span>Create Account</span>
-            <ArrowRight className="w-3 h-3" />
-          </button>
-        </div>
+      {/* Bottom Right: Quick Action Button */}
+      <div className="absolute bottom-6 right-5 z-20 hidden sm:block">
+        <button
+          onClick={() => onOpenAuth('signup')}
+          className="inline-flex items-center space-x-2 px-4 py-2.5 rounded-2xl bg-white/95 hover:bg-white backdrop-blur-xl border border-[#DCE2EA] text-slateInk-900 hover:text-tranquil-700 text-xs font-semibold shadow-card transition-all cursor-pointer"
+        >
+          <span>Connect Your Telemetry</span>
+          <ArrowRight className="w-3.5 h-3.5 text-tranquil-600" />
+        </button>
       </div>
 
-      {/* Spatial 3D Floating Node Tooltip (when active) */}
-      <div className="absolute top-1/2 left-8 -translate-y-1/2 z-20 hidden xl:block pointer-events-none">
+      {/* Floating Single Minimal Pill (Top-Right of center) */}
+      <div className="absolute top-20 right-5 z-20 hidden lg:block pointer-events-none">
         <AnimatePresence mode="wait">
           <motion.div
-            key={activeView}
-            initial={{ opacity: 0, x: -12 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -12 }}
-            transition={{ duration: 0.3, ease: fluidEase }}
-            className="p-4 rounded-2xl bg-white/95 backdrop-blur-xl border border-tranquil-200 shadow-float max-w-xs space-y-2 text-xs"
+            key={activeStream}
+            initial={{ opacity: 0, y: -6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -6 }}
+            transition={{ duration: 0.25, ease: fluidEase }}
+            className="p-3.5 rounded-2xl bg-white/95 backdrop-blur-xl border border-[#DCE2EA] shadow-float max-w-xs space-y-1.5 text-xs"
           >
-            <div className="flex items-center space-x-1.5 text-tranquil-700 font-bold uppercase tracking-wider text-[10px]">
-              <Sparkles className="w-3 h-3 text-tranquil-600" />
+            <div className="flex items-center justify-between text-[11px] font-bold text-slateInk-900">
               <span>
-                {activeView === 'holistic'
-                  ? 'All Streams Correlated'
-                  : activeView === 'cardiac'
-                  ? 'Resting Pulse & HRV Stream'
-                  : activeView === 'metabolic'
-                  ? 'Biomarker Extraction OCR'
-                  : 'Circadian Core Sleep Nadir'}
+                {activeStream === 'cardiac'
+                  ? 'Cardiovascular Stream'
+                  : activeStream === 'circadian'
+                  ? 'Circadian Sleep Nadir'
+                  : 'Diagnostic Lab Ingestion'}
+              </span>
+              <span className="font-mono text-softMint-700 font-semibold">
+                {activeStream === 'cardiac'
+                  ? `${pulseBpm} BPM`
+                  : activeStream === 'circadian'
+                  ? '36.2 °C'
+                  : 'Optimal'}
               </span>
             </div>
 
-            <p className="text-slateInk-700 leading-relaxed text-[11px]">
-              {activeView === 'holistic'
-                ? 'Vigil cross-correlates multi-channel biosignals into an interconnected biological graph, catching drift that isolated metrics miss.'
-                : activeView === 'cardiac'
-                ? 'Monitors nocturnal resting heart rate trajectory and vagal recovery tone, flagging consecutive upward drift.'
-                : activeView === 'metabolic'
-                ? 'Extracts lipid panels, hs-CRP, and metabolic labs via clinical OCR, anchoring answers in lab baselines.'
-                : 'Tracks the nocturnal temperature dip and sleep debt, differentiating acute fatigue from chronic inflammation.'}
+            <p className="text-[11px] text-slateInk-600 leading-snug">
+              {activeStream === 'cardiac'
+                ? 'Passive resting heart rate & HRV trajectory tracking to catch subtle physiological drift early.'
+                : activeStream === 'circadian'
+                ? 'Monitors nocturnal core temperature dips and deep sleep latency to assess authentic autonomic recovery.'
+                : 'OCR extraction of clinical blood panels (hs-CRP, lipid profiles, glucose) with zero hallucinations.'}
             </p>
 
-            <div className="pt-1 text-[10px] font-semibold text-softMint-700 flex items-center gap-1">
-              <CheckCircle2 className="w-3 h-3" />
-              <span>Grounded in Peer-Reviewed Clinical Standards</span>
+            <div className="pt-1 text-[10px] font-medium text-softMint-700 flex items-center gap-1">
+              <CheckCircle2 className="w-3 h-3 text-softMint-600" />
+              <span>Normal Sinus Baseline • Encrypted</span>
             </div>
           </motion.div>
         </AnimatePresence>
       </div>
-
     </div>
   );
 }

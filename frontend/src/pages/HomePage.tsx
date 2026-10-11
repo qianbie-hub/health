@@ -415,7 +415,7 @@ export default function HomePage({ onOpenAuth }: HomePageProps) {
 
                 {/* The 3D WebGL Canvas */}
                 <div className="relative w-full h-[340px] sm:h-[400px] flex items-center justify-center">
-                  <Biometric3DCanvas className="w-full h-full" />
+                  <Biometric3DCanvas mode={active3DMode} className="w-full h-full" />
 
                   {/* Overlay 3D Floating Hologram Pill */}
                   <div className="absolute top-4 left-4 p-2.5 rounded-2xl bg-white/90 backdrop-blur-md border border-[#DCE2EA] shadow-xs text-xs space-y-0.5 pointer-events-none">

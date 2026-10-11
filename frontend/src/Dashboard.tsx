@@ -33,26 +33,13 @@ import {
   Sparkles,
   ArrowLeft,
   LogOut,
-  MessageSquare,
+  Calendar,
+  Clock,
+  Layers,
   HelpCircle,
-  Stethoscope,
-  Lightbulb,
-  Copy,
-  ClipboardList,
-  CheckCheck,
-  Plus,
+  Utensils,
   Pill
 } from 'lucide-react';
-
-export interface AiClinicalSummary {
-  headline?: string;
-  simple_explanation?: string;
-  what_looks_good?: string[];
-  what_needs_attention?: string[];
-  wearable_correlation?: string;
-  simple_actions?: string[];
-  doctor_questions?: string[];
-}
 
 interface VitalItem {
   name: string;
@@ -91,9 +78,80 @@ interface Medication {
   name: string;
   dosage: string;
   timing: string;
+  scheduled_time?: string;
+  meal_relation?: string;
   category: string;
   taken_today: boolean;
 }
+
+// Medication helpers for scheduled time & before/after meal indicators
+const getMedicationTime = (med: Medication): string => {
+  if (med.scheduled_time && med.scheduled_time.trim().length > 0) {
+    return med.scheduled_time;
+  }
+  const nameL = med.name.toLowerCase();
+  const timeL = (med.timing || '').toLowerCase();
+  if (nameL.includes('metformin')) return '08:00 AM';
+  if (nameL.includes('vitamin d')) return '08:30 AM';
+  if (nameL.includes('coq10') || timeL.includes('afternoon') || timeL.includes('lunch')) return '01:00 PM';
+  if (nameL.includes('atorvastatin') || timeL.includes('evening') || timeL.includes('dinner')) return '08:00 PM';
+  if (nameL.includes('magnesium') || timeL.includes('night') || timeL.includes('bed')) return '09:45 PM';
+  if (timeL.includes('morning')) return '08:00 AM';
+  return '08:30 AM';
+};
+
+interface MealRelationInfo {
+  label: 'Before Meal' | 'After Meal' | 'With Meal';
+  badgeClass: string;
+  iconClass: string;
+  tip: string;
+}
+
+const getMedicationMealInfo = (med: Medication): MealRelationInfo => {
+  const rawMeal = (med.meal_relation || '').toLowerCase();
+  const rawDose = (med.dosage || '').toLowerCase();
+  const nameL = med.name.toLowerCase();
+
+  if (rawMeal.includes('before') || rawDose.includes('before') || nameL.includes('magnesium')) {
+    return {
+      label: 'Before Meal',
+      badgeClass: 'bg-amber-50 text-amber-800 border-amber-200/90',
+      iconClass: 'text-amber-600',
+      tip: 'Take on empty stomach or 30m prior to food/sleep for optimal bioavailability.',
+    };
+  }
+
+  if (rawMeal.includes('with') || rawDose.includes('with') || nameL.includes('metformin')) {
+    return {
+      label: 'With Meal',
+      badgeClass: 'bg-tranquil-100 text-tranquil-800 border-tranquil-200/90',
+      iconClass: 'text-tranquil-600',
+      tip: 'Take directly alongside food to buffer gastric mucosal lining and aid digestion.',
+    };
+  }
+
+  return {
+    label: 'After Meal',
+    badgeClass: 'bg-softMint-100 text-softMint-800 border-softMint-200/90',
+    iconClass: 'text-softMint-700',
+    tip: 'Take within 30 minutes following your meal for smooth metabolic absorption.',
+  };
+};
+
+const MED_TIME_SORT_ORDER: Record<string, number> = {
+  '08:00 AM': 1,
+  '08:30 AM': 2,
+  '09:00 AM': 3,
+  '12:00 PM': 4,
+  '01:00 PM': 5,
+  '02:00 PM': 6,
+  '06:00 PM': 7,
+  '07:00 PM': 8,
+  '08:00 PM': 9,
+  '09:00 PM': 10,
+  '09:45 PM': 11,
+  '10:00 PM': 12,
+};
 
 interface Biomarker {
   id: number;
@@ -130,29 +188,6 @@ interface ChatMessage {
   created_at?: string;
   isStreaming?: boolean;
 }
-
-export interface CareMember {
-  id: number;
-  name: string;
-  relationship_name: string;
-  role_tag?: string;
-  phone?: string;
-  sync_status?: string;
-  permissions?: string;
-}
-
-export interface EmergencyPassData {
-  id: number;
-  blood_type: string;
-  allergies: string;
-  emergency_contact_name: string;
-  emergency_contact_phone: string;
-  physician_name: string;
-  physician_phone: string;
-  hospital_preference: string;
-  dnr_status: boolean;
-}
-
 
 const dayDataMap: Record<number, { rhr: string; sleep: string; temp: string; note: string }> = {
   1: { rhr: '69 bpm', sleep: '6.8h', temp: '36.6°C', note: 'Balanced baseline' },
@@ -283,6 +318,7 @@ export default function Dashboard({ onNavigateToHome, onSignOut, initialTab }: D
   const [selectedMetric, setSelectedMetric] = useState<MetricDetail | null>(null);
   const [burstMedId, setBurstMedId] = useState<number | null>(null);
   const [toggledMedId, setToggledMedId] = useState<number | null>(null);
+  const [medTimingFilter, setMedTimingFilter] = useState<'All' | 'Morning' | 'Afternoon' | 'Evening' | 'Night'>('All');
   const [isCopilotOpen, setIsCopilotOpen] = useState(false);
 
   // useScroll hook for Module 3 (Header scroll morph)
@@ -302,12 +338,19 @@ export default function Dashboard({ onNavigateToHome, onSignOut, initialTab }: D
   const [reports, setReports] = useState<DiagnosticReport[]>([]);
   const [outOfRangeBiomarkers, setOutOfRangeBiomarkers] = useState<Biomarker[]>([]);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
-  const [emergencyPass, setEmergencyPass] = useState<EmergencyPassData | null>(null);
-  const [careMembers, setCareMembers] = useState<CareMember[]>([]);
   const [inputMessage, setInputMessage] = useState('');
   const [isSending, setIsSending] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  
+  // Core Problem Statement Pillars: Medical Record Intelligence, Plain Language Explainer & Unified Profile
+  const [recordsSubTab, setRecordsSubTab] = useState<'reports' | 'plain_summary' | 'timeline'>('reports');
+  const [plainSummaryData, setPlainSummaryData] = useState<any | null>(null);
+  const [timelineEvents, setTimelineEvents] = useState<any[]>([]);
+  const [timelineFilter, setTimelineFilter] = useState<string>('all');
+  const [unifiedProfileData, setUnifiedProfileData] = useState<any | null>(null);
+  const [diagnosesList, setDiagnosesList] = useState<any[]>([]);
+  const [explainingModalBiomarker, setExplainingModalBiomarker] = useState<any | null>(null);
   
   // Interactive UI states
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
@@ -324,12 +367,9 @@ export default function Dashboard({ onNavigateToHome, onSignOut, initialTab }: D
   const [analysisStage, setAnalysisStage] = useState(0); // 0: idle, 1: OCR, 2: wearable correlation, 3: biomarker extraction, 4: dashboard synthesis
   const [analyzedDocResult, setAnalyzedDocResult] = useState<any | null>(null);
   const [showAnalyzedBanner, setShowAnalyzedBanner] = useState(false);
-  const [selectedDocumentPreset, setSelectedDocumentPreset] = useState<'quest_panel' | 'jenkins_rx' | 'holter_ecg'>('quest_panel');
+  const [selectedDocumentPreset, setSelectedDocumentPreset] = useState<'quest_panel' | 'jenkins_rx' | 'mercy_discharge' | 'holter_ecg'>('quest_panel');
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [isDraggingFile, setIsDraggingFile] = useState(false);
-  const intakeResultRef = useRef<HTMLDivElement>(null);
-  const [showRawClinicalData, setShowRawClinicalData] = useState(false);
-  const [copiedSummary, setCopiedSummary] = useState(false);
   
   // User Profile & Care Circle interactive states
   const [isEmergencyModalOpen, setIsEmergencyModalOpen] = useState(false);
@@ -351,58 +391,6 @@ export default function Dashboard({ onNavigateToHome, onSignOut, initialTab }: D
   const [shareSleepRecovery, setShareSleepRecovery] = useState(true);
   const [shareMedicationStatus, setShareMedicationStatus] = useState(true);
   const [allowEmergencyGps, setAllowEmergencyGps] = useState(true);
-
-  // Add Prescribed Medicine Modal States
-  const [isAddMedModalOpen, setIsAddMedModalOpen] = useState(false);
-  const [newMedName, setNewMedName] = useState('');
-  const [newMedDosage, setNewMedDosage] = useState('');
-  const [newMedTiming, setNewMedTiming] = useState<'Morning' | 'Afternoon' | 'Evening' | 'Night'>('Morning');
-  const [newMedCategory, setNewMedCategory] = useState('Prescription Rx');
-  const [newMedNotes, setNewMedNotes] = useState('');
-  const [isSubmittingMed, setIsSubmittingMed] = useState(false);
-  const [addMedSuccessToast, setAddMedSuccessToast] = useState(false);
-
-  const handleAddMedication = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newMedName.trim() || !newMedDosage.trim()) return;
-
-    setIsSubmittingMed(true);
-    try {
-      const token = typeof window !== 'undefined' ? localStorage.getItem('vigil_token') : null;
-      const res = await fetch('/api/medications', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {})
-        },
-        body: JSON.stringify({
-          name: newMedName.trim(),
-          dosage: newMedDosage.trim(),
-          timing: newMedTiming,
-          category: newMedCategory.trim() || 'Prescription Rx',
-          notes: newMedNotes.trim() || undefined,
-          taken_today: false
-        })
-      });
-
-      if (res.ok) {
-        const createdMed = await res.json();
-        setMedications(prev => [...prev, createdMed]);
-        setIsAddMedModalOpen(false);
-        setNewMedName('');
-        setNewMedDosage('');
-        setNewMedNotes('');
-        setAddMedSuccessToast(true);
-        setTimeout(() => setAddMedSuccessToast(false), 2500);
-      } else {
-        throw new Error('Failed to save prescribed medication');
-      }
-    } catch (err) {
-      console.error('Error adding prescribed medication:', err);
-    } finally {
-      setIsSubmittingMed(false);
-    }
-  };
 
   const chatScrollRef = useRef<HTMLDivElement>(null);
 
@@ -427,13 +415,11 @@ export default function Dashboard({ onNavigateToHome, onSignOut, initialTab }: D
       const token = typeof window !== 'undefined' ? localStorage.getItem('vigil_token') : null;
       const authHeaders: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
 
-      const [patientRes, medsRes, reportsRes, chatRes, passRes, careRes] = await Promise.all([
+      const [patientRes, medsRes, reportsRes, chatRes] = await Promise.all([
         fetch('/api/patient', { headers: authHeaders }),
         fetch('/api/medications', { headers: authHeaders }),
         fetch('/api/reports', { headers: authHeaders }),
-        fetch('/api/chat/history', { headers: authHeaders }),
-        fetch('/api/emergency-pass', { headers: authHeaders }),
-        fetch('/api/care-circle', { headers: authHeaders })
+        fetch('/api/chat/history', { headers: authHeaders })
       ]);
 
       if (!patientRes.ok || !medsRes.ok || !reportsRes.ok) {
@@ -444,73 +430,33 @@ export default function Dashboard({ onNavigateToHome, onSignOut, initialTab }: D
       const medsData = await medsRes.json();
       const reportsData = await reportsRes.json();
       const chatData = chatRes.ok ? await chatRes.json() : [];
-      const passData = passRes.ok ? await passRes.json() : null;
-      const careData = careRes.ok ? await careRes.json() : [];
 
       setPatient(patientData);
       setMedications(medsData);
       setReports(reportsData.reports || []);
       setOutOfRangeBiomarkers(reportsData.out_of_range_biomarkers || []);
       setChatMessages(chatData);
-      setEmergencyPass(passData);
-      setCareMembers(careData);
+
+      // Fetch unified profile, plain-language summary, and chronological timeline
+      try {
+        const [plainRes, timelineRes, profileRes, diagRes] = await Promise.all([
+          fetch('/api/records/summary/plain-language', { headers: authHeaders }),
+          fetch('/api/timeline', { headers: authHeaders }),
+          fetch('/api/profile/unified', { headers: authHeaders }),
+          fetch('/api/diagnoses', { headers: authHeaders })
+        ]);
+        if (plainRes.ok) setPlainSummaryData(await plainRes.json());
+        if (timelineRes.ok) setTimelineEvents(await timelineRes.json());
+        if (profileRes.ok) setUnifiedProfileData(await profileRes.json());
+        if (diagRes.ok) setDiagnosesList(await diagRes.json());
+      } catch (subErr) {
+        console.warn('Sub-intelligence data fetch:', subErr);
+      }
     } catch (err: any) {
       console.error('Fetch error:', err);
       setError(err.message || 'Failed to connect to Vigil API');
     } finally {
       setLoading(false);
-    }
-  };
-
-  const handleAddCareMember = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!inviteName.trim()) return;
-
-    try {
-      const token = typeof window !== 'undefined' ? localStorage.getItem('vigil_token') : null;
-      const res = await fetch('/api/care-circle', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {})
-        },
-        body: JSON.stringify({
-          name: inviteName.trim(),
-          relationship_name: inviteRelationship,
-          role_tag: inviteRelationship.includes('Spouse') || inviteRelationship.includes('Partner')
-            ? 'Primary Proxy'
-            : inviteRelationship.includes('Physician')
-            ? 'Physician'
-            : 'Family',
-          phone: inviteContact.trim(),
-          permissions: inviteAccess
-        })
-      });
-
-      if (res.ok) {
-        const createdMember = await res.json();
-        setCareMembers(prev => [...prev, createdMember]);
-        setInviteSuccess(true);
-        setTimeout(() => {
-          setInviteSuccess(false);
-          setIsInviteModalOpen(false);
-          setInviteName('');
-          setInviteContact('');
-        }, 1800);
-      }
-    } catch (err) {
-      console.error('Error adding care member:', err);
-    }
-  };
-
-  const handleDeleteCareMember = async (id: number) => {
-    try {
-      const res = await fetch(`/api/care-circle/${id}`, { method: 'DELETE' });
-      if (res.ok) {
-        setCareMembers(prev => prev.filter(m => m.id !== id));
-      }
-    } catch (err) {
-      console.error('Error deleting care member:', err);
     }
   };
 
@@ -537,25 +483,6 @@ export default function Dashboard({ onNavigateToHome, onSignOut, initialTab }: D
     setAnalysisStage(4);
 
     try {
-      let docTitle = preset === 'quest_panel' 
-        ? 'Quest Comprehensive Metabolic & Lipid Panel'
-        : preset === 'jenkins_rx'
-        ? 'Dr. Sarah Jenkins Rx Prescription Slip'
-        : 'Ambulatory Holter & Rhythm Strip (24h)';
-      let docType = preset === 'jenkins_rx' ? 'prescription' : preset === 'holter_ecg' ? 'holter_ecg' : 'lab_report';
-
-      if (uploadedFile) {
-        const lowerName = uploadedFile.name.toLowerCase();
-        if (lowerName.includes('rx') || lowerName.includes('presc') || lowerName.includes('med')) {
-          docType = 'prescription';
-        } else if (lowerName.includes('ecg') || lowerName.includes('holter') || lowerName.includes('heart') || lowerName.includes('rhythm')) {
-          docType = 'holter_ecg';
-        } else {
-          docType = 'lab_report';
-        }
-        docTitle = uploadedFile.name.replace(/\.[^/.]+$/, "").replace(/[-_]/g, " ");
-      }
-
       const token = typeof window !== 'undefined' ? localStorage.getItem('vigil_token') : null;
       const res = await fetch('/api/documents/analyze', {
         method: 'POST',
@@ -564,9 +491,15 @@ export default function Dashboard({ onNavigateToHome, onSignOut, initialTab }: D
           ...(token ? { Authorization: `Bearer ${token}` } : {})
         },
         body: JSON.stringify({
-          preset_id: uploadedFile ? undefined : preset,
-          title: docTitle,
-          document_type: docType,
+          preset_id: preset,
+          title: preset === 'quest_panel' 
+            ? 'Quest Comprehensive Metabolic & Lipid Panel'
+            : preset === 'jenkins_rx'
+            ? 'Dr. Sarah Jenkins Rx Prescription Slip'
+            : preset === 'mercy_discharge'
+            ? 'Mercy Health Clinical Inpatient Discharge Summary'
+            : 'Ambulatory Holter & Rhythm Strip (24h)',
+          document_type: preset === 'jenkins_rx' ? 'prescription' : preset === 'mercy_discharge' ? 'discharge_summary' : preset === 'holter_ecg' ? 'diagnostic_record' : 'lab_report',
           filename: uploadedFile ? uploadedFile.name : `${preset}_scan.pdf`
         })
       });
@@ -580,27 +513,12 @@ export default function Dashboard({ onNavigateToHome, onSignOut, initialTab }: D
     } catch (err) {
       console.error('Document analysis error:', err);
     } finally {
-      await new Promise(r => setTimeout(r, 450));
+      await new Promise(r => setTimeout(r, 500));
       setIsAnalyzingDoc(false);
       setAnalysisStage(0);
-      // Keep patient on intake tab to immediately review their AI summary!
-      setTimeout(() => {
-        intakeResultRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      }, 150);
+      setActiveTab('today');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
     }
-  };
-
-  const handleCopyAiSummary = (text: string) => {
-    navigator.clipboard?.writeText(text);
-    setCopiedSummary(true);
-    setTimeout(() => setCopiedSummary(false), 2500);
-  };
-
-  const handleAskCopilotAboutDoc = (customQuestion?: string) => {
-    const question = customQuestion || `Could you explain my ${analyzedDocResult?.title || 'recent clinical report'} in even simpler words, and what steps I should take next?`;
-    setInputMessage(question);
-    setActiveTab('night-help');
-    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   // Auto-scroll chat to bottom
@@ -643,6 +561,20 @@ export default function Dashboard({ onNavigateToHome, onSignOut, initialTab }: D
     }
   };
 
+  // Mark All or Reset All Medications
+  const handleMarkAllMedications = async (targetTaken: boolean) => {
+    setMedications(prev => prev.map(m => ({ ...m, taken_today: targetTaken })));
+    try {
+      const promises = medications
+        .filter(m => m.taken_today !== targetTaken)
+        .map(m => fetch(`/api/medications/${m.id}/toggle`, { method: 'PATCH' }));
+      await Promise.all(promises);
+    } catch (err) {
+      console.error('Error batch updating medications:', err);
+      fetchData();
+    }
+  };
+
   // Send Chat Message with Streaming Support
   const handleSendMessage = async (textToSend?: string) => {
     const message = textToSend || inputMessage;
@@ -670,9 +602,13 @@ export default function Dashboard({ onNavigateToHome, onSignOut, initialTab }: D
     setChatMessages(prev => [...prev, tempUserMsg, tempAssistantMsg]);
 
     try {
+      const token = typeof window !== 'undefined' ? localStorage.getItem('vigil_token') : null;
       const response = await fetch('/api/chat', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {})
+        },
         body: JSON.stringify({ message })
       });
 
@@ -699,9 +635,8 @@ export default function Dashboard({ onNavigateToHome, onSignOut, initialTab }: D
 
             try {
               const data = JSON.parse(dataStr);
-              const piece = data.token || data.chunk;
-              if (piece) {
-                streamedContent += piece;
+              if (data.token) {
+                streamedContent += data.token;
                 setChatMessages(prev =>
                   prev.map(m =>
                     m.id === tempAssistantId
@@ -754,158 +689,102 @@ export default function Dashboard({ onNavigateToHome, onSignOut, initialTab }: D
   const completedMedsCount = medications.filter(m => m.taken_today).length;
   const currentDayInfo = dayDataMap[selectedDay] || dayDataMap[8];
 
-  const hrVital = patient?.vitals?.find(v => v.name.toLowerCase().includes('heart'));
-  const tempVital = patient?.vitals?.find(v => v.name.toLowerCase().includes('temp'));
-  const sleepVital = patient?.vitals?.find(v => v.name.toLowerCase().includes('sleep'));
-  const bpVital = patient?.vitals?.find(v => v.name.toLowerCase().includes('blood pressure'));
-
-  const isHrAlert = hrVital?.is_alert ?? false;
-  const isSleepAlert = sleepVital?.is_alert ?? false;
-  const isTempAlert = tempVital?.is_alert ?? false;
-  const isBpAlert = bpVital?.is_alert ?? false;
-  const hasAnyAlert = isHrAlert || isSleepAlert || isTempAlert || isBpAlert;
-
-  // 2x2 Metric dataset with dynamic historical trajectory for Morphing Shared Surface (Option 1.C)
+  // 2x2 Metric dataset with 8-day historical trajectory for Morphing Shared Surface (Option 1.C)
   const metricCards: MetricDetail[] = [
     {
       id: 'rhr',
       name: 'Resting Heart Rate',
       icon: Heart,
-      iconColor: isHrAlert ? 'text-peach-700' : 'text-softMint-700',
-      value: hrVital?.value ? hrVital.value.replace(/[^0-9.]/g, '') || '70' : '70',
+      iconColor: 'text-peach-700',
+      value: patient?.vitals?.find(v => v.name.toLowerCase().includes('heart'))?.value || '78',
       unit: 'bpm',
-      isAlert: isHrAlert,
-      statusText: hrVital?.status || 'In your usual range',
+      isAlert: true,
+      statusText: 'Outside your usual range',
       usualRange: '60–75 bpm',
       clinicalThreshold: 'Baseline 60–75 bpm • Sustained upward shift of +9 bpm over 8 consecutive nights triggers trend assessment.',
-      guidance: isHrAlert
-        ? 'Resting heart rate elevation is strongly correlated with shortened sleep and autonomic strain. Prioritize hydration and early evening calm.'
-        : 'Resting heart rate is steady within your calibrated baseline window. Cardiovascular autonomic recovery is optimal.',
-      copilotPrompt: isHrAlert
-        ? 'Explain why my resting heart rate has risen above baseline.'
-        : 'Review my resting heart rate stability and baseline trend.',
-      history8Day: isHrAlert
-        ? [
-            { day: 'Oct 4', value: 69, unit: 'bpm' },
-            { day: 'Oct 5', value: 70, unit: 'bpm' },
-            { day: 'Oct 6', value: 71, unit: 'bpm' },
-            { day: 'Oct 7', value: 72, unit: 'bpm' },
-            { day: 'Oct 8', value: 74, unit: 'bpm' },
-            { day: 'Oct 9', value: 75, unit: 'bpm' },
-            { day: 'Oct 10', value: 76, unit: 'bpm' },
-            { day: 'Oct 11', value: 78, unit: 'bpm', isPeak: true }
-          ]
-        : [
-            { day: 'Oct 4', value: 70, unit: 'bpm' },
-            { day: 'Oct 5', value: 71, unit: 'bpm' },
-            { day: 'Oct 6', value: 70, unit: 'bpm' },
-            { day: 'Oct 7', value: 69, unit: 'bpm' },
-            { day: 'Oct 8', value: 70, unit: 'bpm' },
-            { day: 'Oct 9', value: 71, unit: 'bpm' },
-            { day: 'Oct 10', value: 70, unit: 'bpm' },
-            { day: 'Oct 11', value: 70, unit: 'bpm' }
-          ]
+      guidance: 'Resting heart rate elevation is strongly correlated with shortened sleep (5.7h) and autonomic strain. Prioritize hydration, early evening calm, and restful nocturnal recovery.',
+      copilotPrompt: 'Explain why my resting heart rate has risen from 69 to 78 bpm over the last 8 days.',
+      history8Day: [
+        { day: 'Oct 4', value: 69, unit: 'bpm' },
+        { day: 'Oct 5', value: 70, unit: 'bpm' },
+        { day: 'Oct 6', value: 71, unit: 'bpm' },
+        { day: 'Oct 7', value: 72, unit: 'bpm' },
+        { day: 'Oct 8', value: 74, unit: 'bpm' },
+        { day: 'Oct 9', value: 75, unit: 'bpm' },
+        { day: 'Oct 10', value: 76, unit: 'bpm' },
+        { day: 'Oct 11', value: 78, unit: 'bpm', isPeak: true }
+      ]
     },
     {
       id: 'temp',
       name: 'Skin Temperature',
       icon: Thermometer,
-      iconColor: isTempAlert ? 'text-peach-700' : 'text-softMint-700',
-      value: tempVital?.value ? tempVital.value.replace(/[^0-9.]/g, '') || '36.8' : '36.8',
+      iconColor: 'text-softMint-700',
+      value: patient?.vitals?.find(v => v.name.toLowerCase().includes('temp'))?.value || '37.1',
       unit: '°C',
-      isAlert: isTempAlert,
-      statusText: tempVital?.status || 'In your usual range',
+      isAlert: false,
+      statusText: 'In your usual range',
       usualRange: '36.5–37.3°C',
       clinicalThreshold: 'Circadian oral range 36.5–37.3°C • Sub-febrile boundary threshold: > 37.5°C',
-      guidance: 'Circadian skin temperature tracking within safely normative baseline bounds.',
-      copilotPrompt: 'Explain my 8-day temperature trend and whether it is within baseline.',
+      guidance: 'Mild upper baseline shift noted over 4 days (+0.5°C), remaining safely sub-febrile. Consistent with physiological recovery or early immune response.',
+      copilotPrompt: 'Explain my 8-day temperature trend and whether 37.1°C is significant.',
       history8Day: [
         { day: 'Oct 4', value: 36.6, unit: '°C' },
         { day: 'Oct 5', value: 36.7, unit: '°C' },
         { day: 'Oct 6', value: 36.7, unit: '°C' },
         { day: 'Oct 7', value: 36.8, unit: '°C' },
-        { day: 'Oct 8', value: 36.8, unit: '°C' },
-        { day: 'Oct 9', value: 36.8, unit: '°C' },
-        { day: 'Oct 10', value: 36.8, unit: '°C' },
-        { day: 'Oct 11', value: 36.8, unit: '°C' }
+        { day: 'Oct 8', value: 36.9, unit: '°C' },
+        { day: 'Oct 9', value: 37.0, unit: '°C' },
+        { day: 'Oct 10', value: 37.0, unit: '°C' },
+        { day: 'Oct 11', value: 37.1, unit: '°C', isPeak: true }
       ]
     },
     {
       id: 'sleep',
       name: 'Sleep Duration',
       icon: Moon,
-      iconColor: isSleepAlert ? 'text-peach-700' : 'text-lavender-700',
-      value: (sleepVital?.value === '—' || !sleepVital?.value)
-        ? '—'
-        : (sleepVital.value.replace(/[^0-9.]/g, '') || sleepVital.value),
-      unit: sleepVital?.value === '—' ? '' : 'hours',
-      isAlert: isSleepAlert,
-      statusText: sleepVital?.status || (sleepVital?.value === '—' ? 'Awaiting first night recording' : 'In your usual range'),
+      iconColor: 'text-lavender-700',
+      value: patient?.vitals?.find(v => v.name.toLowerCase().includes('sleep'))?.value || '5.7',
+      unit: 'hours',
+      isAlert: true,
+      statusText: 'Outside your usual range',
       usualRange: '7.0–9.0 h',
       clinicalThreshold: 'Target restful window: 7.0–9.0 hours • Sleep deficit alert threshold: < 6.0 hours',
-      guidance: sleepVital?.value === '—'
-        ? 'Night rest baseline tracking pending. Wear your connected sensor tonight to record your first night of restorative sleep.'
-        : isSleepAlert
-        ? 'Restorative nocturnal sleep duration has dropped below 6.0 hours. Decreased deep restorative sleep limits parasympathetic rebound.'
-        : 'Sleep window is consistent within healthy circadian parameters. Nocturnal parasympathetic recovery is stabilized.',
-      copilotPrompt: sleepVital?.value === '—'
-        ? 'How do I track and calibrate my first night of sleep with Vigil?'
-        : 'How is my sleep recovery tracking against my 90-day baseline?',
-      history8Day: sleepVital?.value === '—'
-        ? [
-            { day: 'Day 1', value: 0, unit: 'h' },
-            { day: 'Day 2', value: 0, unit: 'h' },
-            { day: 'Day 3', value: 0, unit: 'h' },
-            { day: 'Day 4', value: 0, unit: 'h' },
-            { day: 'Day 5', value: 0, unit: 'h' },
-            { day: 'Day 6', value: 0, unit: 'h' },
-            { day: 'Day 7', value: 0, unit: 'h' },
-            { day: 'Tonight', value: 0, unit: 'h' }
-          ]
-        : isSleepAlert
-        ? [
-            { day: 'Oct 4', value: 6.8, unit: 'h' },
-            { day: 'Oct 5', value: 6.7, unit: 'h' },
-            { day: 'Oct 6', value: 6.5, unit: 'h' },
-            { day: 'Oct 7', value: 6.4, unit: 'h' },
-            { day: 'Oct 8', value: 6.1, unit: 'h' },
-            { day: 'Oct 9', value: 6.0, unit: 'h' },
-            { day: 'Oct 10', value: 5.9, unit: 'h' },
-            { day: 'Oct 11', value: 5.7, unit: 'h', isPeak: true }
-          ]
-        : [
-            { day: 'Oct 4', value: 7.5, unit: 'h' },
-            { day: 'Oct 5', value: 7.6, unit: 'h' },
-            { day: 'Oct 6', value: 7.4, unit: 'h' },
-            { day: 'Oct 7', value: 7.5, unit: 'h' },
-            { day: 'Oct 8', value: 7.7, unit: 'h' },
-            { day: 'Oct 9', value: 7.5, unit: 'h' },
-            { day: 'Oct 10', value: 7.6, unit: 'h' },
-            { day: 'Oct 11', value: 7.5, unit: 'h' }
-          ]
+      guidance: 'Restorative nocturnal sleep duration has dropped below 6.0 hours for 3 consecutive nights. Decreased deep restorative sleep limits parasympathetic rebound.',
+      copilotPrompt: 'How does my sleep deprivation affect my cardiovascular metrics and recovery?',
+      history8Day: [
+        { day: 'Oct 4', value: 6.8, unit: 'h' },
+        { day: 'Oct 5', value: 6.7, unit: 'h' },
+        { day: 'Oct 6', value: 6.5, unit: 'h' },
+        { day: 'Oct 7', value: 6.4, unit: 'h' },
+        { day: 'Oct 8', value: 6.1, unit: 'h' },
+        { day: 'Oct 9', value: 6.0, unit: 'h' },
+        { day: 'Oct 10', value: 5.9, unit: 'h' },
+        { day: 'Oct 11', value: 5.7, unit: 'h', isPeak: true }
+      ]
     },
     {
       id: 'bp',
       name: 'Blood Pressure',
       icon: Activity,
-      iconColor: isBpAlert ? 'text-peach-700' : 'text-tranquil-700',
-      value: bpVital?.value ? bpVital.value.replace(/[^0-9./]/g, '') || '120' : '120',
-      unit: '/ 80 mmHg',
-      isAlert: isBpAlert,
-      statusText: bpVital?.status || 'In your usual range',
+      iconColor: 'text-tranquil-700',
+      value: patient?.vitals?.find(v => v.name.toLowerCase().includes('blood pressure'))?.value || '129',
+      unit: '/ 82 mmHg',
+      isAlert: false,
+      statusText: 'In your usual range',
       usualRange: '< 130 mmHg',
       clinicalThreshold: 'Normal systolic: < 120 mmHg • Elevated boundary: 120–129 mmHg • Stage 1 boundary: ≥ 130 mmHg',
-      guidance: 'Systolic blood pressure remains within normative personal bounds, tracking steadily alongside recent ambulatory readings.',
+      guidance: 'Systolic blood pressure remains within normative personal bounds at 129 mmHg, tracking steadily alongside recent ambulatory readings.',
       copilotPrompt: 'Review my blood pressure history and stability over the past week.',
       history8Day: [
-        { day: 'Oct 4', value: 120, unit: 'mmHg' },
-        { day: 'Oct 5', value: 121, unit: 'mmHg' },
-        { day: 'Oct 6', value: 120, unit: 'mmHg' },
-        { day: 'Oct 7', value: 121, unit: 'mmHg' },
-        { day: 'Oct 8', value: 120, unit: 'mmHg' },
-        { day: 'Oct 9', value: 120, unit: 'mmHg' },
-        { day: 'Oct 10', value: 120, unit: 'mmHg' },
-        { day: 'Oct 11', value: 120, unit: 'mmHg' }
+        { day: 'Oct 4', value: 124, unit: 'mmHg' },
+        { day: 'Oct 5', value: 125, unit: 'mmHg' },
+        { day: 'Oct 6', value: 126, unit: 'mmHg' },
+        { day: 'Oct 7', value: 126, unit: 'mmHg' },
+        { day: 'Oct 8', value: 128, unit: 'mmHg' },
+        { day: 'Oct 9', value: 127, unit: 'mmHg' },
+        { day: 'Oct 10', value: 128, unit: 'mmHg' },
+        { day: 'Oct 11', value: 129, unit: 'mmHg', isPeak: true }
       ]
     }
   ];
@@ -1435,81 +1314,54 @@ export default function Dashboard({ onNavigateToHome, onSignOut, initialTab }: D
 
                     {/* Clinical Correlation */}
                     <div className="bg-[#F8FAFC] rounded-2xl p-3.5 border border-[#DCE2EA]">
-                      <p className="text-[11px] font-semibold uppercase tracking-wider text-slateInk-500">AI Plain-English Insight</p>
+                      <p className="text-[11px] font-semibold uppercase tracking-wider text-slateInk-500">Wearable Correlated Insight</p>
                       <p className="text-xs text-slateInk-700 leading-relaxed mt-1 line-clamp-3">
-                        {analyzedDocResult.ai_summary?.headline || analyzedDocResult.summary || 'Correlated with 8-day resting heart rate drift (+9 bpm) and sleep duration metrics.'}
+                        {analyzedDocResult.summary || 'Correlated with 8-day resting heart rate drift (+9 bpm) and sleep duration metrics.'}
                       </p>
                     </div>
                   </div>
                 </section>
               )}
 
-              {/* Headline Observation Card: Dynamic for Calibrated Baseline vs. Flagged Alert */}
-              <section className={`rounded-3xl p-7 sm:p-9 border shadow-card relative overflow-hidden transition-all ${
-                hasAnyAlert 
-                  ? 'bg-[#FDF4EF] border-[#F7C7B2]' 
-                  : 'bg-[#F4F9F6] border-[#CCE4D7]'
-              }`}>
+              {/* Headline Observation Card (Comforting Subtle Peach Accent) */}
+              <section className="bg-[#FDF4EF] rounded-3xl p-7 sm:p-9 border border-[#F7C7B2] shadow-card relative overflow-hidden transition-all">
                 <div className="space-y-5">
                   <div className="flex items-center justify-between">
-                    <span className={`inline-flex items-center gap-1.5 bg-white text-xs font-semibold px-3 py-1 rounded-full border shadow-xs ${
-                      hasAnyAlert 
-                        ? 'text-peach-700 border-[#F7C7B2]' 
-                        : 'text-softMint-800 border-[#CCE4D7]'
-                    }`}>
-                      <span className={`w-1.5 h-1.5 rounded-full animate-pulse-soft ${
-                        hasAnyAlert ? 'bg-peach-600' : 'bg-softMint-600'
-                      }`}></span>
-                      {hasAnyAlert ? 'Gentle Health Note • 8 Days' : 'Baseline Calibrated • All Readings In Range'}
+                    <span className="inline-flex items-center gap-1.5 bg-white text-peach-700 text-xs font-semibold px-3 py-1 rounded-full border border-[#F7C7B2] shadow-xs">
+                      <span className="w-1.5 h-1.5 rounded-full bg-peach-600 animate-pulse-soft"></span>
+                      Gentle Health Note • 8 Days
                     </span>
-                    <span className="text-xs text-slateInk-500 font-sans">
-                      {hasAnyAlert ? 'October Rhythm Drift' : 'Continuous Biometric Stream'}
-                    </span>
+                    <span className="text-xs text-slateInk-500 font-sans">October Rhythm Drift</span>
                   </div>
 
                   <div>
                     <h2 className="font-serif text-2xl sm:text-3xl font-normal text-slateInk-900 tracking-tight leading-snug">
-                      {patient?.flagged_pattern?.title || (hasAnyAlert ? 'A steady shift in your resting rhythm' : 'Continuous Baseline Calibrated')}
+                      {patient?.flagged_pattern?.title || 'A steady shift in your resting rhythm'}
                     </h2>
                     <p className="text-slateInk-700 text-base sm:text-lg leading-relaxed mt-2 max-w-2xl font-light">
-                      {patient?.flagged_pattern?.description || (
-                        hasAnyAlert
-                          ? 'Resting heart rate has risen 8 days in a row, from 69 to 78 bpm, accompanied by a 1.1-hour reduction in restful sleep.'
-                          : 'Zero abnormal physiological shifts detected. Continuous telemetry is active and calibrated. Upload a report or prescription in Optical Intake to begin automated analysis.'
-                      )}
+                      {patient?.flagged_pattern?.description ||
+                        'Resting heart rate has risen 8 days in a row, from 69 to 78 bpm, accompanied by a 1.1-hour reduction in restful sleep.'}
                     </p>
                   </div>
 
                   {/* Clean 3-Signal Metric Summary */}
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5 pt-1">
-                    <div className="bg-white p-4 rounded-2xl border border-[#DCE2EA] shadow-xs">
+                    <div className="bg-white p-4 rounded-2xl border border-[#F7C7B2] shadow-xs">
                       <span className="text-[11px] font-medium text-slateInk-500 block">Resting Heart Rate</span>
-                      <span className={`text-lg font-serif font-bold mt-0.5 block ${hasAnyAlert ? 'text-peach-700' : 'text-slateInk-900'}`}>
-                        {hasAnyAlert ? '69 → 78 bpm' : `${hrVital?.value || '70 bpm'}`}
-                      </span>
-                      <span className="text-[11px] text-slateInk-500 mt-0.5 block">
-                        {hasAnyAlert ? '+9 bpm over 8 nights' : 'In your usual range (60-75)'}
-                      </span>
+                      <span className="text-lg font-serif font-bold text-peach-700 mt-0.5 block">69 → 78 bpm</span>
+                      <span className="text-[11px] text-slateInk-500 mt-0.5 block">+9 bpm over 8 nights</span>
                     </div>
 
-                    <div className="bg-white p-4 rounded-2xl border border-[#DCE2EA] shadow-xs">
+                    <div className="bg-white p-4 rounded-2xl border border-[#F7C7B2] shadow-xs">
                       <span className="text-[11px] font-medium text-slateInk-500 block">Sleep Window</span>
-                      <span className={`text-lg font-serif font-bold mt-0.5 block ${hasAnyAlert ? 'text-lavender-700' : 'text-slateInk-900'}`}>
-                        {hasAnyAlert ? '6.8 → 5.7 hours' : `${sleepVital?.value || '7.5 hours'}`}
-                      </span>
-                      <span className="text-[11px] text-slateInk-500 mt-0.5 block">
-                        {hasAnyAlert ? '1.1h shorter than baseline' : 'Optimal nocturnal recovery'}
-                      </span>
+                      <span className="text-lg font-serif font-bold text-lavender-700 mt-0.5 block">6.8 → 5.7 hours</span>
+                      <span className="text-[11px] text-slateInk-500 mt-0.5 block">1.1h shorter than baseline</span>
                     </div>
 
-                    <div className="bg-white p-4 rounded-2xl border border-[#DCE2EA] shadow-xs">
+                    <div className="bg-white p-4 rounded-2xl border border-[#F7C7B2] shadow-xs">
                       <span className="text-[11px] font-medium text-slateInk-500 block">Skin Temperature</span>
-                      <span className="text-lg font-serif font-bold text-softMint-700 mt-0.5 block">
-                        {hasAnyAlert ? '36.6 → 37.1°C' : `${tempVital?.value || '36.8°C'}`}
-                      </span>
-                      <span className="text-[11px] text-slateInk-500 mt-0.5 block">
-                        {hasAnyAlert ? '+0.5° warm shift (safe zone)' : 'Circadian baseline in range'}
-                      </span>
+                      <span className="text-lg font-serif font-bold text-softMint-700 mt-0.5 block">36.6 → 37.1°C</span>
+                      <span className="text-[11px] text-slateInk-500 mt-0.5 block">+0.5° warm shift (safe zone)</span>
                     </div>
                   </div>
 
@@ -1763,178 +1615,332 @@ export default function Dashboard({ onNavigateToHome, onSignOut, initialTab }: D
                 </div>
               </section>
 
-              {/* Daily Care Protocol & Supportive Habits */}
-              <section className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {/* Medications / Protocol */}
-                <div className="bg-white rounded-3xl p-6 sm:p-7 border border-[#DCE2EA] shadow-card flex flex-col justify-between card-hover-effect">
+              {/* ========================================================================= */}
+              {/* MEDICINES FOR TODAY CHECKLIST (WITH TIME & BEFORE / AFTER MEAL)          */}
+              {/* ========================================================================= */}
+              <section className="bg-white rounded-3xl p-6 sm:p-8 border border-[#DCE2EA] shadow-card space-y-6 relative overflow-hidden">
+                {/* Section Header */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-5 border-b border-[#DCE2EA]">
                   <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-xs font-semibold uppercase tracking-wider text-slateInk-500">
-                        Prescription Protocol • Daily Care
+                    <div className="flex items-center gap-2">
+                      <span className="px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-tranquil-100 text-tranquil-800 border border-tranquil-200 flex items-center gap-1.5">
+                        <Pill className="w-3 h-3 text-tranquil-700" />
+                        Daily Care Protocol
                       </span>
-                      <span className="text-xs font-medium text-softMint-800 bg-softMint-100 px-2.5 py-0.5 rounded-full border border-softMint-200">
-                        {completedMedsCount} of {medications.length} logged
-                      </span>
+                      <span className="text-xs text-slateInk-400 font-sans">• Real-Time Regimen</span>
                     </div>
-
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3 pb-2 border-b border-[#DCE2EA]">
-                      <div>
-                        <h4 className="font-serif text-lg font-normal text-slateInk-900">
-                          Prescribed Medicines
-                        </h4>
-                        <p className="text-[11px] text-slateInk-500">
-                          Daily active prescription regimen & supportive protocol
-                        </p>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => setIsAddMedModalOpen(true)}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-tranquil-50 hover:bg-tranquil-100 text-tranquil-700 text-xs font-semibold border border-tranquil-200 transition-colors cursor-pointer shadow-xs shrink-0 self-start sm:self-auto"
-                      >
-                        <Plus className="w-3.5 h-3.5 text-tranquil-600" />
-                        <span>Add Prescribed Medicine</span>
-                      </button>
-                    </div>
-
-                    <div className="space-y-2 text-xs">
-                      {medications.length === 0 ? (
-                        <div className="p-6 rounded-2xl bg-[#F8FAFC] border border-dashed border-[#DCE2EA] text-center my-2">
-                          <div className="w-10 h-10 rounded-2xl bg-tranquil-50 text-tranquil-600 flex items-center justify-center mx-auto mb-2 border border-tranquil-200">
-                            <Pill className="w-5 h-5" />
-                          </div>
-                          <p className="text-xs text-slateInk-800 font-medium">No prescribed medicines logged yet.</p>
-                          <p className="text-[11px] text-slateInk-500 mt-1 max-w-xs mx-auto">
-                            Click "+ Add Prescribed Medicine" above or upload an official prescription in Optical Intake to automatically extract and populate medications.
-                          </p>
-                          <button
-                            type="button"
-                            onClick={() => setIsAddMedModalOpen(true)}
-                            className="mt-3 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-tranquil-600 hover:bg-tranquil-700 text-white text-[11px] font-semibold shadow-xs transition-all cursor-pointer"
-                          >
-                            <Plus className="w-3 h-3" />
-                            <span>Add Prescribed Medicine</span>
-                          </button>
-                        </div>
-                      ) : (
-                        medications.map(med => (
-                          <div
-                            key={med.id}
-                            onClick={() => handleToggleMedication(med.id)}
-                            className="flex items-center justify-between p-3 rounded-2xl bg-[#F8FAFC] border border-[#DCE2EA] cursor-pointer hover:bg-slate-50 transition-colors relative"
-                          >
-                            <div className="flex items-center space-x-2.5">
-                              {/* Checkbox with Bouncy Spring Scale & Particle Burst */}
-                              <div className="relative flex items-center justify-center w-5 h-5">
-                                <motion.div
-                                  key={med.taken_today ? 'taken' : 'pending'}
-                                  initial={false}
-                                  animate={
-                                    toggledMedId === med.id
-                                      ? { scale: [1, 1.25, 0.95, 1] }
-                                      : { scale: 1 }
-                                  }
-                                  transition={{ duration: 0.35, ease: fluidEase }}
-                                  className="flex items-center justify-center"
-                                >
-                                  {med.taken_today ? (
-                                    <CheckCircle2 className="w-4 h-4 text-softMint-600 fill-softMint-100" />
-                                  ) : (
-                                    <Circle className="w-4 h-4 text-[#A7B3C2]" />
-                                  )}
-                                </motion.div>
-
-                                {/* 6 Sparkle Particles radiating outward */}
-                                {burstMedId === med.id && (
-                                  <span className="absolute inset-0 pointer-events-none flex items-center justify-center">
-                                    {BURST_PARTICLES.map((p, pIdx) => (
-                                      <motion.span
-                                        key={pIdx}
-                                        className="absolute rounded-full pointer-events-none"
-                                        style={{
-                                          width: 4,
-                                          height: 4,
-                                          backgroundColor: p.color,
-                                        }}
-                                        initial={{ scale: 0, x: 0, y: 0, opacity: 1 }}
-                                        animate={{
-                                          scale: [0, 1.3, 0],
-                                          x: p.x,
-                                          y: p.y,
-                                          opacity: [1, 1, 0],
-                                        }}
-                                        transition={{ duration: 0.35, ease: fluidEase }}
-                                      />
-                                    ))}
-                                  </span>
-                                )}
-                              </div>
-
-                              <div>
-                                {/* Left-to-right animated strikethrough */}
-                                <div className="relative inline-block">
-                                  <span className={`font-semibold transition-colors duration-200 ${med.taken_today ? 'text-slateInk-400' : 'text-slateInk-900'}`}>
-                                    {med.name}
-                                  </span>
-                                  <motion.span
-                                    className="absolute left-0 top-1/2 h-[1.5px] bg-slateInk-400 pointer-events-none"
-                                    style={{ originX: 0, width: '100%' }}
-                                    initial={false}
-                                    animate={{ scaleX: med.taken_today ? 1 : 0 }}
-                                    transition={microSpring}
-                                  />
-                                </div>
-                                <div className="flex items-center gap-1.5 mt-0.5">
-                                  <p className="text-[10px] text-slateInk-500">{med.dosage}</p>
-                                  {med.category && (
-                                    <span className="text-[9px] px-1.5 py-0.2 rounded-md bg-tranquil-50 text-tranquil-700 border border-tranquil-200 font-medium">
-                                      {med.category}
-                                    </span>
-                                  )}
-                                </div>
-                              </div>
-                            </div>
-                            <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full ${
-                              med.taken_today ? 'bg-softMint-100 text-softMint-800 border border-softMint-200' : 'bg-slate-100 text-slateInk-700'
-                            }`}>
-                              {med.timing}
-                            </span>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="mt-4 pt-3 border-t border-[#DCE2EA] flex items-center justify-between text-xs text-slateInk-500">
-                    <span>
-                      Care Circle: {careMembers.length > 0 ? `${careMembers[0].name} informed` : 'Awaiting caregiver connection'}
-                    </span>
-                    <span className="text-slateInk-700 font-medium">Synced with active profile</span>
-                  </div>
-                </div>
-
-                {/* Calming Evening Wind-Down */}
-                <div className="bg-white rounded-3xl p-6 sm:p-7 border border-[#DCE2EA] shadow-card flex flex-col justify-between card-hover-effect">
-                  <div>
-                    <span className="text-xs font-semibold uppercase tracking-wider text-lavender-800 bg-lavender-100 px-2.5 py-0.5 rounded-full border border-lavender-200">
-                      {sleepVital?.value === '—' ? 'Baseline Setup' : 'Recovery Protocol'}
-                    </span>
-                    <h4 className="font-serif text-lg font-normal text-slateInk-900 mt-2.5 mb-2">
-                      {sleepVital?.value === '—' ? 'Establish your night rest baseline tonight' : 'Protect your rest tonight'}
-                    </h4>
-                    <p className="text-xs sm:text-sm text-slateInk-600 leading-relaxed font-light">
-                      {sleepVital?.value === '—'
-                        ? 'Wear your connected health tracker or smartwatch to bed tonight. Vigil will record your sleep duration, circadian skin temperature, and resting heart rate baseline from your first night of rest.'
-                        : 'Because resting heart rate is slightly elevated and last night was short (5.7h), prioritize an unhurried, gentle evening without intense physical exertion or late screen exposure.'}
+                    <h3 className="font-serif text-2xl font-normal text-slateInk-900 mt-1">
+                      Medicines for Today
+                    </h3>
+                    <p className="text-xs sm:text-sm text-slateInk-600 mt-0.5 font-light">
+                      Scheduled prescription regimen & supportive therapies, coordinated with specific clock times and meal intake.
                     </p>
                   </div>
 
-                  <div className="mt-4 pt-3 border-t border-[#DCE2EA] flex items-center justify-between text-xs">
-                    <span className="text-slateInk-500">
-                      Suggested wind-down: <strong className="text-slateInk-900">{sleepVital?.value === '—' ? '10:30 pm' : '9:45 pm'}</strong>
-                    </span>
-                    <span className="text-softMint-800 font-medium bg-softMint-100 px-2.5 py-0.5 rounded-full border border-softMint-200">
-                      {sleepVital?.value === '—' ? 'Sensor calibration pending' : 'Herbal tea & reading'}
-                    </span>
+                  {/* Adherence Progress Counter & Bar */}
+                  <div className="flex flex-col sm:items-end gap-2 shrink-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-medium text-slateInk-600">Daily Adherence:</span>
+                      <span className="text-xs font-bold text-softMint-800 bg-softMint-100 px-2.5 py-0.5 rounded-full border border-softMint-200">
+                        {completedMedsCount} of {medications.length} taken ({medications.length > 0 ? Math.round((completedMedsCount / medications.length) * 100) : 0}%)
+                      </span>
+                    </div>
+                    {/* Animated Progress Bar */}
+                    <div className="w-full sm:w-48 h-2 bg-slate-100 rounded-full overflow-hidden border border-[#DCE2EA]">
+                      <motion.div
+                        className="h-full bg-gradient-to-r from-softMint-500 via-tranquil-500 to-softMint-400 rounded-full"
+                        initial={false}
+                        animate={{
+                          width: `${medications.length > 0 ? (completedMedsCount / medications.length) * 100 : 0}%`
+                        }}
+                        transition={{ duration: 0.4, ease: fluidEase }}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Filter Pills & Batch Controls */}
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0">
+                    {(['All', 'Morning', 'Afternoon', 'Evening', 'Night'] as const).map(timing => {
+                      const count = timing === 'All'
+                        ? medications.length
+                        : medications.filter(m => m.timing.toLowerCase() === timing.toLowerCase()).length;
+                      const isActive = medTimingFilter === timing;
+
+                      return (
+                        <button
+                          key={timing}
+                          onClick={() => setMedTimingFilter(timing)}
+                          className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all flex items-center gap-1.5 ${
+                            isActive
+                              ? 'bg-slateInk-900 text-white shadow-xs'
+                              : 'bg-[#F8FAFC] text-slateInk-600 hover:bg-slate-100 border border-[#DCE2EA]'
+                          }`}
+                        >
+                          <span>{timing}</span>
+                          <span className={`text-[10px] px-1.5 py-0.2 rounded-full ${
+                            isActive ? 'bg-white/20 text-white' : 'bg-slate-200 text-slateInk-700'
+                          }`}>
+                            {count}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* Batch Action Buttons */}
+                  <div className="flex items-center gap-2 text-xs">
+                    <button
+                      onClick={() => handleMarkAllMedications(true)}
+                      className="px-2.5 py-1 rounded-lg bg-softMint-50 text-softMint-800 hover:bg-softMint-100 border border-softMint-200/80 font-medium transition-colors cursor-pointer"
+                    >
+                      Mark All Taken
+                    </button>
+                    <button
+                      onClick={() => handleMarkAllMedications(false)}
+                      className="px-2.5 py-1 rounded-lg bg-slate-50 text-slateInk-600 hover:bg-slate-100 border border-[#DCE2EA] font-medium transition-colors cursor-pointer"
+                    >
+                      Reset All
+                    </button>
+                  </div>
+                </div>
+
+                {/* Main 2-Column Responsive Layout */}
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                  {/* Left 7 Cols: Medicines Interactive Checklist */}
+                  <div className="lg:col-span-7 space-y-3">
+                    {medications
+                      .filter(m => {
+                        if (medTimingFilter === 'All') return true;
+                        return m.timing.toLowerCase() === medTimingFilter.toLowerCase();
+                      })
+                      .sort((a, b) => {
+                        const timeA = getMedicationTime(a);
+                        const timeB = getMedicationTime(b);
+                        const orderA = MED_TIME_SORT_ORDER[timeA] || 99;
+                        const orderB = MED_TIME_SORT_ORDER[timeB] || 99;
+                        return orderA - orderB;
+                      })
+                      .map(med => {
+                        const medTime = getMedicationTime(med);
+                        const mealInfo = getMedicationMealInfo(med);
+
+                        return (
+                          <div
+                            key={med.id}
+                            onClick={() => handleToggleMedication(med.id)}
+                            className={`p-4 rounded-2xl border transition-all cursor-pointer relative overflow-hidden group ${
+                              med.taken_today
+                                ? 'bg-[#F8FAFC] border-[#DCE2EA] opacity-85 hover:opacity-100'
+                                : 'bg-white border-[#DCE2EA] hover:border-tranquil-300 hover:shadow-xs'
+                            }`}
+                          >
+                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                              {/* Left Side: Checkbox, Name, Dose, Category */}
+                              <div className="flex items-start space-x-3.5 flex-1 min-w-0">
+                                {/* Dopamine Checkbox */}
+                                <div className="relative flex items-center justify-center w-6 h-6 mt-0.5 shrink-0">
+                                  <motion.div
+                                    key={med.taken_today ? 'taken' : 'pending'}
+                                    initial={false}
+                                    animate={
+                                      toggledMedId === med.id
+                                        ? { scale: [1, 1.3, 0.9, 1] }
+                                        : { scale: 1 }
+                                    }
+                                    transition={{ duration: 0.35, ease: fluidEase }}
+                                    className="flex items-center justify-center cursor-pointer"
+                                  >
+                                    {med.taken_today ? (
+                                      <CheckCircle2 className="w-5 h-5 text-softMint-600 fill-softMint-100" />
+                                    ) : (
+                                      <Circle className="w-5 h-5 text-[#A7B3C2] group-hover:text-tranquil-600 transition-colors" />
+                                    )}
+                                  </motion.div>
+
+                                  {/* Particle Burst on Click */}
+                                  {burstMedId === med.id && (
+                                    <span className="absolute inset-0 pointer-events-none flex items-center justify-center">
+                                      {BURST_PARTICLES.map((p, pIdx) => (
+                                        <motion.span
+                                          key={pIdx}
+                                          className="absolute rounded-full pointer-events-none"
+                                          style={{
+                                            width: 4,
+                                            height: 4,
+                                            backgroundColor: p.color,
+                                          }}
+                                          initial={{ scale: 0, x: 0, y: 0, opacity: 1 }}
+                                          animate={{
+                                            scale: [0, 1.4, 0],
+                                            x: p.x * 1.2,
+                                            y: p.y * 1.2,
+                                            opacity: [1, 1, 0],
+                                          }}
+                                          transition={{ duration: 0.35, ease: fluidEase }}
+                                        />
+                                      ))}
+                                    </span>
+                                  )}
+                                </div>
+
+                                {/* Text Details */}
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <div className="relative inline-block">
+                                      <span
+                                        className={`font-semibold text-sm transition-colors duration-200 ${
+                                          med.taken_today ? 'text-slateInk-400' : 'text-slateInk-900'
+                                        }`}
+                                      >
+                                        {med.name}
+                                      </span>
+                                      <motion.span
+                                        className="absolute left-0 top-1/2 h-[1.5px] bg-slateInk-400 pointer-events-none"
+                                        style={{ originX: 0, width: '100%' }}
+                                        initial={false}
+                                        animate={{ scaleX: med.taken_today ? 1 : 0 }}
+                                        transition={microSpring}
+                                      />
+                                    </div>
+
+                                    <span className="text-xs text-slateInk-500 font-medium">
+                                      • {med.dosage}
+                                    </span>
+
+                                    <span className="text-[10px] font-medium text-slateInk-500 bg-slate-100 px-2 py-0.5 rounded-full border border-slate-200/60 hidden sm:inline-block">
+                                      {med.category}
+                                    </span>
+                                  </div>
+
+                                  <p className="text-[11px] text-slateInk-500 mt-1 line-clamp-1">
+                                    {mealInfo.tip}
+                                  </p>
+                                </div>
+                              </div>
+
+                              {/* Right Side: TIME BADGE and BEFORE / AFTER MEAL BADGE */}
+                              <div className="flex items-center gap-2 shrink-0 pl-9 sm:pl-0">
+                                {/* Scheduled Time Badge */}
+                                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-xs font-semibold bg-white border border-[#DCE2EA] text-slateInk-800 shadow-2xs">
+                                  <Clock className="w-3.5 h-3.5 text-tranquil-600" />
+                                  <span>{medTime}</span>
+                                </span>
+
+                                {/* Before / After Meal Badge */}
+                                <span
+                                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-xs font-semibold border shadow-2xs ${mealInfo.badgeClass}`}
+                                  title={mealInfo.tip}
+                                >
+                                  <Utensils className={`w-3.5 h-3.5 ${mealInfo.iconClass}`} />
+                                  <span>{mealInfo.label}</span>
+                                </span>
+
+                                {/* Status Tag */}
+                                <span
+                                  className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${
+                                    med.taken_today
+                                      ? 'bg-softMint-100 text-softMint-800 border-softMint-200'
+                                      : 'bg-slate-100 text-slateInk-500 border-slate-200'
+                                  }`}
+                                >
+                                  {med.taken_today ? 'Taken ✓' : 'Due'}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+
+                    {medications.filter(m => medTimingFilter === 'All' || m.timing.toLowerCase() === medTimingFilter.toLowerCase()).length === 0 && (
+                      <div className="p-8 text-center bg-[#F8FAFC] rounded-2xl border border-dashed border-[#DCE2EA]">
+                        <p className="text-sm text-slateInk-500">No medicines scheduled for {medTimingFilter.toLowerCase()}.</p>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Right 5 Cols: Meal Timing Rationale Guide & Evening Wind-Down */}
+                  <div className="lg:col-span-5 space-y-4">
+                    {/* Meal Timing Clinical Guide Card */}
+                    <div className="bg-[#F8FAFC] rounded-2xl p-5 border border-[#DCE2EA] space-y-3">
+                      <div className="flex items-center space-x-2.5">
+                        <div className="w-8 h-8 rounded-xl bg-tranquil-100 flex items-center justify-center text-tranquil-700 shrink-0">
+                          <Utensils className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <h4 className="text-xs font-bold uppercase tracking-wider text-slateInk-900">
+                            Meal Timing Protocols
+                          </h4>
+                          <p className="text-[11px] text-slateInk-500">Biological reasons for time & meal coordination</p>
+                        </div>
+                      </div>
+
+                      <div className="space-y-2.5 text-xs text-slateInk-700 pt-1">
+                        <div className="p-3 rounded-xl bg-white border border-[#DCE2EA]">
+                          <div className="flex items-center justify-between">
+                            <span className="font-semibold text-amber-800 flex items-center gap-1.5 text-xs">
+                              <span className="w-2 h-2 rounded-full bg-amber-500"></span>
+                              Before Meal / Bedtime
+                            </span>
+                            <span className="text-[10px] font-mono text-slateInk-400">09:45 PM</span>
+                          </div>
+                          <p className="text-[11px] text-slateInk-600 mt-1 leading-relaxed">
+                            <strong>Magnesium Glycinate:</strong> Best absorbed on an emptier stomach prior to sleep to trigger parasympathetic vagal recovery and deepen slow-wave sleep.
+                          </p>
+                        </div>
+
+                        <div className="p-3 rounded-xl bg-white border border-[#DCE2EA]">
+                          <div className="flex items-center justify-between">
+                            <span className="font-semibold text-tranquil-800 flex items-center gap-1.5 text-xs">
+                              <span className="w-2 h-2 rounded-full bg-tranquil-500"></span>
+                              With Meal / Breakfast
+                            </span>
+                            <span className="text-[10px] font-mono text-slateInk-400">08:00 AM</span>
+                          </div>
+                          <p className="text-[11px] text-slateInk-600 mt-1 leading-relaxed">
+                            <strong>Metformin:</strong> Coordinated directly with breakfast food to blunt postprandial glucose spikes and protect the gastric mucosal barrier from GI irritation.
+                          </p>
+                        </div>
+
+                        <div className="p-3 rounded-xl bg-white border border-[#DCE2EA]">
+                          <div className="flex items-center justify-between">
+                            <span className="font-semibold text-softMint-800 flex items-center gap-1.5 text-xs">
+                              <span className="w-2 h-2 rounded-full bg-softMint-500"></span>
+                              After Meal (Lunch & Dinner)
+                            </span>
+                            <span className="text-[10px] font-mono text-slateInk-400">01:00 PM & 08:00 PM</span>
+                          </div>
+                          <p className="text-[11px] text-slateInk-600 mt-1 leading-relaxed">
+                            <strong>Vitamin D3, CoQ10 & Atorvastatin:</strong> Fat-soluble vitamins require dietary lipids for micellar transport, while statins target nocturnal liver cholesterol synthesis.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Evening Wind-Down Card */}
+                    <div className="bg-gradient-to-br from-lavender-50 via-white to-lavender-50/50 rounded-2xl p-5 border border-lavender-200/90 shadow-xs space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-semibold uppercase tracking-wider text-lavender-800 bg-lavender-100 px-2.5 py-0.5 rounded-full border border-lavender-200">
+                          Recovery Protocol
+                        </span>
+                        <span className="text-xs text-slateInk-500 font-mono font-medium">9:45 pm</span>
+                      </div>
+
+                      <h4 className="font-serif text-base font-semibold text-slateInk-900">
+                        Protect your rest tonight
+                      </h4>
+                      <p className="text-xs text-slateInk-600 leading-relaxed font-light">
+                        Because resting heart rate is elevated (+9 bpm over 8 days) and sleep dropped to 5.7h, log your night dose and enjoy a calming evening without strenuous screen work.
+                      </p>
+
+                      <div className="pt-2 border-t border-lavender-200/70 flex items-center justify-between text-xs text-slateInk-500">
+                        <span>Care Circle: Rohan informed</span>
+                        <span className="text-softMint-800 font-medium bg-softMint-100 px-2 py-0.5 rounded-full border border-softMint-200">
+                          Synced with morning log
+                        </span>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </section>
@@ -1979,8 +1985,8 @@ export default function Dashboard({ onNavigateToHome, onSignOut, initialTab }: D
                   <span className="text-xs text-slateInk-400">Click a sample to test analysis</span>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
-                  {/* Preset 1: Quest Comprehensive Metabolic & Lipid Panel */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+                  {/* Preset 1: Quest Comprehensive Metabolic & Lipid Panel (Lab Report) */}
                   <div
                     onClick={() => {
                       setSelectedDocumentPreset('quest_panel');
@@ -1997,22 +2003,22 @@ export default function Dashboard({ onNavigateToHome, onSignOut, initialTab }: D
                         LAB
                       </div>
                       <span className="text-[10px] font-semibold text-tranquil-800 bg-tranquil-50 border border-tranquil-200 px-2 py-0.5 rounded-full">
-                        Quest Diagnostics
+                        Lab Report
                       </span>
                     </div>
                     <h3 className="font-serif text-sm font-semibold text-slateInk-900 mt-2.5">
-                      Quest Comprehensive Metabolic & Lipid Panel
+                      Quest Diagnostics Metabolic & Lipid Panel
                     </h3>
                     <p className="text-xs text-slateInk-500 mt-1 line-clamp-2">
-                      Full venous serum panel including Total Cholesterol, Fasting Glucose, eGFR, and electrolytes.
+                      Venous blood serum panel: hs-CRP, LDL Cholesterol, Fasting Glucose, eGFR, ALT.
                     </p>
                     <div className="mt-3 pt-2.5 border-t border-[#DCE2EA] flex items-center justify-between text-[11px]">
                       <span className="text-slateInk-400 font-mono">14 Biomarkers</span>
-                      <span className="text-peach-700 font-medium">Flags Total Chol 228</span>
+                      <span className="text-peach-700 font-medium">hs-CRP 3.4 mg/L</span>
                     </div>
                   </div>
 
-                  {/* Preset 2: Dr. Sarah Jenkins Rx Prescription Slip */}
+                  {/* Preset 2: Dr. Sarah Jenkins Rx Prescription Slip (Prescription) */}
                   <div
                     onClick={() => {
                       setSelectedDocumentPreset('jenkins_rx');
@@ -2029,22 +2035,54 @@ export default function Dashboard({ onNavigateToHome, onSignOut, initialTab }: D
                         Rx
                       </div>
                       <span className="text-[10px] font-semibold text-softMint-800 bg-softMint-50 border border-softMint-200 px-2 py-0.5 rounded-full">
-                        Prescription Slip
+                        Prescription
                       </span>
                     </div>
                     <h3 className="font-serif text-sm font-semibold text-slateInk-900 mt-2.5">
                       Dr. Sarah Jenkins Rx (CoQ10 Adjunct)
                     </h3>
                     <p className="text-xs text-slateInk-500 mt-1 line-clamp-2">
-                      Coenzyme Q10 (Ubiquinol 200mg) prescribed as daily morning adjunct to mitigate statin muscle fatigue.
+                      CoQ10 (Ubiquinol 100mg) statin adjunct with Atorvastatin 20mg and Magnesium Glycinate.
                     </p>
                     <div className="mt-3 pt-2.5 border-t border-[#DCE2EA] flex items-center justify-between text-[11px]">
-                      <span className="text-slateInk-400 font-mono">Mercy Health Clinic</span>
-                      <span className="text-softMint-700 font-medium">Morning Regimen</span>
+                      <span className="text-slateInk-400 font-mono">Mercy Cardiology</span>
+                      <span className="text-softMint-700 font-medium">Care Protocol</span>
                     </div>
                   </div>
 
-                  {/* Preset 3: Ambulatory Holter & Rhythm Strip (24h) */}
+                  {/* Preset 3: Mercy Health Hospital Discharge Summary (Discharge Summary) */}
+                  <div
+                    onClick={() => {
+                      setSelectedDocumentPreset('mercy_discharge');
+                      setUploadedFile(null);
+                    }}
+                    className={`p-4 rounded-3xl border transition-all cursor-pointer card-hover-effect relative ${
+                      selectedDocumentPreset === 'mercy_discharge'
+                        ? 'bg-white border-2 border-tranquil-600 shadow-md ring-2 ring-tranquil-100'
+                        : 'bg-white border-[#DCE2EA] shadow-xs hover:border-tranquil-300'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between">
+                      <div className="w-9 h-9 rounded-2xl bg-peach-100 text-peach-700 flex items-center justify-center font-bold text-xs">
+                        SUM
+                      </div>
+                      <span className="text-[10px] font-semibold text-peach-800 bg-peach-50 border border-peach-200 px-2 py-0.5 rounded-full">
+                        Discharge Summary
+                      </span>
+                    </div>
+                    <h3 className="font-serif text-sm font-semibold text-slateInk-900 mt-2.5">
+                      Mercy Hospital Inpatient Discharge Summary
+                    </h3>
+                    <p className="text-xs text-slateInk-500 mt-1 line-clamp-2">
+                      Evaluated for 8-day RHR rise and sleep deficit. Troponin negative, discharge diagnoses & directives.
+                    </p>
+                    <div className="mt-3 pt-2.5 border-t border-[#DCE2EA] flex items-center justify-between text-[11px]">
+                      <span className="text-slateInk-400 font-mono">Admit: Oct 08–10</span>
+                      <span className="text-peach-700 font-medium">Troponin Negative</span>
+                    </div>
+                  </div>
+
+                  {/* Preset 4: Ambulatory Holter Rhythm Strip (Diagnostic Record) */}
                   <div
                     onClick={() => {
                       setSelectedDocumentPreset('holter_ecg');
@@ -2061,18 +2099,18 @@ export default function Dashboard({ onNavigateToHome, onSignOut, initialTab }: D
                         ECG
                       </div>
                       <span className="text-[10px] font-semibold text-lavender-800 bg-lavender-50 border border-lavender-200 px-2 py-0.5 rounded-full">
-                        Cardiology telemetry
+                        Diagnostic Record
                       </span>
                     </div>
                     <h3 className="font-serif text-sm font-semibold text-slateInk-900 mt-2.5">
-                      Ambulatory Holter Rhythm Strip (24h)
+                      Ambulatory 24h Holter Rhythm Strip
                     </h3>
                     <p className="text-xs text-slateInk-500 mt-1 line-clamp-2">
-                      24-hour continuous 3-lead Holter monitor correlating nocturnal sinus tachycardia with wearable logs.
+                      24h telemetry correlating nocturnal tachycardia arousals (91 bpm) with wearable logs. No malignant arrhythmia.
                     </p>
                     <div className="mt-3 pt-2.5 border-t border-[#DCE2EA] flex items-center justify-between text-[11px]">
-                      <span className="text-slateInk-400 font-mono">112,410 QRS complexes</span>
-                      <span className="text-peach-700 font-medium">Correlates with Oura</span>
+                      <span className="text-slateInk-400 font-mono">112,410 Beats</span>
+                      <span className="text-lavender-700 font-medium">Benign Sinus</span>
                     </div>
                   </div>
                 </div>
@@ -2098,12 +2136,12 @@ export default function Dashboard({ onNavigateToHome, onSignOut, initialTab }: D
                     {isAnalyzingDoc ? (
                       <>
                         <RefreshCw className="w-4 h-4 animate-spin text-white" />
-                        <span>Vigil AI is Analyzing...</span>
+                        <span>Analyzing with Vigil AI...</span>
                       </>
                     ) : (
                       <>
                         <Sparkles className="w-4 h-4 text-white" />
-                        <span>Analyze with Vigil AI</span>
+                        <span>Analyze & Present to Dashboard</span>
                       </>
                     )}
                   </button>
@@ -2203,313 +2241,198 @@ export default function Dashboard({ onNavigateToHome, onSignOut, initialTab }: D
 
                 {/* Analysis Completed Presentation Card */}
                 {analyzedDocResult && !isAnalyzingDoc && (
-                  <div
-                    ref={intakeResultRef}
-                    className="p-6 sm:p-8 rounded-3xl bg-gradient-to-b from-[#F9FBFA] via-white to-[#F8FAFC] border-2 border-softMint-400 shadow-lg space-y-6 animate-scroll-reveal"
-                  >
-                    {/* Header Row */}
-                    <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 pb-5 border-b border-[#DCE2EA]">
+                  <div className="p-6 rounded-3xl bg-[#F8FAFC] border-2 border-softMint-400 shadow-sm space-y-5 animate-scroll-reveal">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-[#DCE2EA]">
                       <div>
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-softMint-100 text-softMint-800 border border-softMint-300 shadow-xs">
-                            <Sparkles className="w-3.5 h-3.5 text-softMint-700" />
-                            <span>Vigil Clinical AI • Plain-English Synthesis</span>
+                        <div className="flex items-center space-x-2">
+                          <span className="px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-softMint-100 text-softMint-800 border border-softMint-200">
+                            ✓ Analysis Complete & Integrated
                           </span>
                           <span className="text-xs text-slateInk-400 font-sans">
-                            {analyzedDocResult.date || 'Analyzed Just Now'} • {analyzedDocResult.facility || 'Clinical Lab'}
+                            {analyzedDocResult.document_type}
                           </span>
                         </div>
-                        <h3 className="font-serif text-xl sm:text-2xl font-bold text-slateInk-900 mt-2">
+                        <h4 className="font-serif text-lg font-semibold text-slateInk-900 mt-1">
                           {analyzedDocResult.title}
-                        </h3>
-                      </div>
-
-                      <div className="flex flex-wrap items-center gap-2">
-                        {/* Copy Plain-English Summary Button */}
-                        <button
-                          onClick={() => handleCopyAiSummary(
-                            `${analyzedDocResult.ai_summary?.headline || analyzedDocResult.title}\n\n` +
-                            `Summary: ${analyzedDocResult.ai_summary?.simple_explanation || analyzedDocResult.summary}\n\n` +
-                            `Wearable Link: ${analyzedDocResult.ai_summary?.wearable_correlation || ''}`
-                          )}
-                          className="inline-flex items-center space-x-1.5 px-3.5 py-2 rounded-2xl bg-white hover:bg-slate-50 text-slateInk-700 text-xs font-semibold border border-[#DCE2EA] shadow-xs transition-colors"
-                          title="Copy patient summary to clipboard"
-                        >
-                          {copiedSummary ? (
-                            <>
-                              <CheckCheck className="w-3.5 h-3.5 text-softMint-600" />
-                              <span className="text-softMint-700">Copied!</span>
-                            </>
-                          ) : (
-                            <>
-                              <Copy className="w-3.5 h-3.5 text-slateInk-500" />
-                              <span>Copy Summary</span>
-                            </>
-                          )}
-                        </button>
-
-                        {/* Ask Copilot Button */}
-                        <button
-                          onClick={() => handleAskCopilotAboutDoc()}
-                          className="inline-flex items-center space-x-1.5 px-3.5 py-2 rounded-2xl bg-tranquil-50 hover:bg-tranquil-100 text-tranquil-800 text-xs font-semibold border border-tranquil-200 shadow-xs transition-colors"
-                        >
-                          <MessageSquare className="w-3.5 h-3.5 text-tranquil-700" />
-                          <span>Ask Copilot</span>
-                        </button>
-
-                        {/* View on Today's Timeline */}
-                        <button
-                          onClick={() => {
-                            setActiveTab('today');
-                            setShowAnalyzedBanner(true);
-                            window.scrollTo({ top: 0, behavior: 'smooth' });
-                          }}
-                          className="inline-flex items-center space-x-1.5 px-4 py-2 rounded-2xl bg-tranquil-600 hover:bg-tranquil-700 text-white text-xs font-semibold shadow-soft transition-all transform active:scale-95"
-                        >
-                          <span>Today's Vitals →</span>
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Section 1: The Patient Headline */}
-                    <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-softMint-50 to-tranquil-50/50 border border-softMint-200/90 flex items-start gap-3.5 shadow-xs">
-                      <div className="w-10 h-10 rounded-2xl bg-white text-softMint-700 border border-softMint-200 flex items-center justify-center shrink-0 shadow-xs">
-                        <Sparkles className="w-5 h-5 text-softMint-700" />
-                      </div>
-                      <div>
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-softMint-800 font-sans block">
-                          Patient-Friendly Takeaway
-                        </span>
-                        <h4 className="font-serif text-base sm:text-lg font-semibold text-slateInk-900 mt-0.5 leading-snug">
-                          {analyzedDocResult.ai_summary?.headline || analyzedDocResult.title}
                         </h4>
                       </div>
-                    </div>
 
-                    {/* Section 2: What Your Document Means in Everyday Words */}
-                    <div className="bg-white p-5 sm:p-6 rounded-2xl border border-[#DCE2EA] shadow-xs space-y-2.5">
-                      <div className="flex items-center justify-between text-xs">
-                        <div className="flex items-center gap-2 font-semibold uppercase tracking-wider text-slateInk-600 font-sans">
-                          <FileText className="w-4 h-4 text-tranquil-600" />
-                          <span>In Plain Words (What This Means for You)</span>
-                        </div>
-                        <span className="text-[11px] text-slateInk-400 font-normal">
-                          Medical jargon translated to everyday English
-                        </span>
-                      </div>
-                      <p className="text-sm text-slateInk-800 leading-relaxed font-normal">
-                        {analyzedDocResult.ai_summary?.simple_explanation || analyzedDocResult.summary}
-                      </p>
-                    </div>
-
-                    {/* Section 3: Two-Column Breakdown (What's Healthy vs What Needs Attention) */}
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      {/* Green Column: What Looks Healthy & Strong */}
-                      <div className="bg-emerald-50/60 p-5 rounded-2xl border border-emerald-200/90 space-y-3">
-                        <div className="flex items-center gap-2 text-emerald-900 font-semibold text-xs uppercase tracking-wider">
-                          <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                          <span>What's Looking Healthy & Strong</span>
-                        </div>
-                        <ul className="space-y-2.5">
-                          {(analyzedDocResult.ai_summary?.what_looks_good || [
-                            "Key metabolic and organ functions are within safe targets.",
-                            "No drug conflicts or dangerous clinical contraindications found."
-                          ]).map((item: string, idx: number) => (
-                            <li key={idx} className="flex items-start gap-2.5 text-xs sm:text-[13px] text-slateInk-800">
-                              <span className="w-4 h-4 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0 mt-0.5 text-[10px] font-bold">✓</span>
-                              <span className="leading-relaxed">{item}</span>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-
-                      {/* Amber Column: What Needs Gentle Attention */}
-                      <div className="bg-peach-50/60 p-5 rounded-2xl border border-peach-200/90 space-y-3">
-                        <div className="flex items-center gap-2 text-peach-900 font-semibold text-xs uppercase tracking-wider">
-                          <AlertCircle className="w-4 h-4 text-peach-600" />
-                          <span>What We're Keeping an Eye On</span>
-                        </div>
-                        <ul className="space-y-2.5">
-                          {(analyzedDocResult.ai_summary?.what_needs_attention || [
-                            "Biomarkers flagged above standard clinical thresholds.",
-                            "Scheduled for re-evaluation with primary care physician."
-                          ]).map((item: string, idx: number) => (
-                            <li key={idx} className="flex items-start gap-2.5 text-xs sm:text-[13px] text-slateInk-800">
-                              <span className="w-4 h-4 rounded-full bg-peach-100 text-peach-700 flex items-center justify-center shrink-0 mt-0.5 text-[10px] font-bold">!</span>
-                              <span className="leading-relaxed">{item}</span>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    </div>
-
-                    {/* Section 4: Wearable Connection & Simple Everyday Actions */}
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      {/* Wearable Connection */}
-                      <div className="bg-white p-5 rounded-2xl border border-[#DCE2EA] shadow-xs space-y-2.5">
-                        <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-tranquil-700 font-sans">
-                          <Activity className="w-4 h-4 text-tranquil-600" />
-                          <span>How This Connects to Your Wearables</span>
-                        </div>
-                        <p className="text-xs sm:text-[13px] text-slateInk-700 leading-relaxed">
-                          {analyzedDocResult.ai_summary?.wearable_correlation || analyzedDocResult.clinical_correlation}
-                        </p>
-                      </div>
-
-                      {/* Everyday Actions */}
-                      <div className="bg-white p-5 rounded-2xl border border-[#DCE2EA] shadow-xs space-y-2.5">
-                        <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-softMint-800 font-sans">
-                          <Lightbulb className="w-4 h-4 text-softMint-700" />
-                          <span>Simple Everyday Actions You Can Take</span>
-                        </div>
-                        <ul className="space-y-2">
-                          {(analyzedDocResult.ai_summary?.simple_actions || [
-                            "Drink 2 liters of water daily to support kidney filtration.",
-                            "Take prescribed medications with breakfast/dinner as directed.",
-                            "Prioritize 7+ hours of sleep to reduce systemic recovery strain."
-                          ]).map((action: string, idx: number) => (
-                            <li key={idx} className="flex items-start gap-2 text-xs sm:text-[13px] text-slateInk-700">
-                              <span className="w-1.5 h-1.5 rounded-full bg-softMint-600 mt-1.5 shrink-0" />
-                              <span>{action}</span>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    </div>
-
-                    {/* Section 5: Helpful Questions for Your Next Doctor Visit */}
-                    <div className="bg-lavender-50/60 p-5 rounded-2xl border border-lavender-200/90 space-y-2.5">
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
-                        <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-lavender-900 font-sans">
-                          <Stethoscope className="w-4 h-4 text-lavender-700" />
-                          <span>Questions to Ask Your Doctor at Your Next Visit</span>
-                        </div>
-                        <span className="text-[11px] text-lavender-700 font-medium">Bring these to your appointment</span>
-                      </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
-                        {(analyzedDocResult.ai_summary?.doctor_questions || [
-                          "Should we recheck my inflammatory or lipid markers in 4 to 6 weeks?",
-                          "Are there any specific lifestyle habits that will help smooth out these numbers?"
-                        ]).map((q: string, idx: number) => (
-                          <div key={idx} className="bg-white p-3 rounded-xl border border-lavender-200 text-xs text-slateInk-800 flex items-start gap-2 shadow-xs">
-                            <HelpCircle className="w-3.5 h-3.5 text-lavender-600 shrink-0 mt-0.5" />
-                            <span className="italic font-serif leading-relaxed">"{q}"</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* Section 6: Quick Copilot Inquiry Prompt Bar */}
-                    <div className="p-4 rounded-2xl bg-gradient-to-r from-[#F8FAFC] to-tranquil-50/30 border border-[#DCE2EA] flex flex-col md:flex-row md:items-center justify-between gap-3">
-                      <div className="flex items-center gap-2 text-xs font-semibold text-slateInk-800">
-                        <MessageSquare className="w-4 h-4 text-tranquil-600 shrink-0" />
-                        <span>Have more questions? Ask Vigil AI Copilot with 1-click:</span>
-                      </div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <button
-                          onClick={() => handleAskCopilotAboutDoc("Can you explain my recent clinical results in even simpler words?")}
-                          className="px-3 py-1.5 rounded-full bg-white hover:bg-tranquil-50 border border-[#DCE2EA] hover:border-tranquil-300 text-slateInk-700 text-xs font-medium transition-colors"
-                        >
-                          "Explain even simpler"
-                        </button>
-                        <button
-                          onClick={() => handleAskCopilotAboutDoc("How does this report relate to my 8-day resting heart rate rise and sleep?")}
-                          className="px-3 py-1.5 rounded-full bg-white hover:bg-tranquil-50 border border-[#DCE2EA] hover:border-tranquil-300 text-slateInk-700 text-xs font-medium transition-colors"
-                        >
-                          "Connect to my heart rate"
-                        </button>
-                        <button
-                          onClick={() => handleAskCopilotAboutDoc()}
-                          className="px-3 py-1.5 rounded-full bg-tranquil-600 hover:bg-tranquil-700 text-white text-xs font-medium shadow-xs transition-colors flex items-center gap-1"
-                        >
-                          <span>Ask Copilot</span>
-                          <ChevronRight className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Section 7: Expandable Raw Clinical Biomarkers & Prescriptions */}
-                    <div className="border-t border-[#DCE2EA] pt-4">
                       <button
-                        onClick={() => setShowRawClinicalData(!showRawClinicalData)}
-                        className="flex items-center justify-between w-full p-3.5 rounded-2xl bg-white hover:bg-slate-50 border border-[#DCE2EA] text-xs font-semibold text-slateInk-700 transition-colors shadow-xs"
+                        onClick={() => {
+                          setActiveTab('today');
+                          setShowAnalyzedBanner(true);
+                          window.scrollTo({ top: 0, behavior: 'smooth' });
+                        }}
+                        className="inline-flex items-center space-x-2 px-4 py-2 rounded-2xl bg-tranquil-600 hover:bg-tranquil-700 text-white text-xs font-semibold shadow-soft transition-all transform active:scale-95"
                       >
-                        <div className="flex items-center gap-2">
-                          <ClipboardList className="w-4 h-4 text-slateInk-500" />
-                          <span>
-                            {showRawClinicalData ? 'Hide' : 'View'} Raw Lab Values, Units & Reference Ranges ({analyzedDocResult.extracted_biomarkers?.length || 0} Biomarkers, {analyzedDocResult.extracted_medications?.length || 0} Medications)
-                          </span>
-                        </div>
-                        {showRawClinicalData ? <ChevronUp className="w-4 h-4 text-slateInk-500" /> : <ChevronDown className="w-4 h-4 text-slateInk-500" />}
+                        <span>Present Findings on Today's Dashboard →</span>
+                        <ChevronRight className="w-4 h-4" />
                       </button>
+                    </div>
 
-                      {showRawClinicalData && (
-                        <div className="mt-4 space-y-4 animate-scroll-reveal">
-                          {/* Biomarkers Table */}
-                          {analyzedDocResult.extracted_biomarkers?.length > 0 && (
-                            <div className="space-y-2">
-                              <span className="text-xs font-semibold uppercase tracking-wider text-slateInk-500 font-sans block">
-                                Extracted Biomarkers ({analyzedDocResult.extracted_biomarkers.length})
-                              </span>
-                              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                                {analyzedDocResult.extracted_biomarkers.map((bm: any, idx: number) => (
-                                  <div
-                                    key={idx}
-                                    className={`p-3.5 rounded-2xl border bg-white ${
-                                      bm.is_out_of_range
-                                        ? 'border-peach-300 ring-1 ring-peach-100'
-                                        : 'border-[#DCE2EA]'
-                                    }`}
-                                  >
-                                    <div className="flex items-center justify-between text-xs">
-                                      <span className="font-semibold text-slateInk-900">{bm.name}</span>
-                                      <span
-                                        className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
-                                          bm.is_out_of_range
-                                            ? 'bg-peach-100 text-peach-800 border border-peach-200'
-                                            : 'bg-softMint-100 text-softMint-800 border border-softMint-200'
-                                        }`}
-                                      >
-                                        {bm.is_out_of_range ? 'Out of Range' : 'Normal'}
-                                      </span>
-                                    </div>
-                                    <div className="text-lg font-serif font-bold text-slateInk-900 mt-1">
-                                      {bm.value} <span className="text-xs font-sans text-slateInk-500">{bm.unit}</span>
-                                    </div>
-                                    <p className="text-[11px] text-slateInk-500 mt-0.5">Ref: {bm.reference_range}</p>
-                                    {bm.notes && (
-                                      <p className="text-[11px] text-slateInk-600 mt-1 italic">{bm.notes}</p>
-                                    )}
-                                  </div>
-                                ))}
+                    {/* Summary */}
+                    <p className="text-xs sm:text-sm text-slateInk-700 leading-relaxed bg-white p-4 rounded-2xl border border-[#DCE2EA]">
+                      {analyzedDocResult.summary}
+                    </p>
+
+                    {/* Parsed Biomarkers Table */}
+                    {analyzedDocResult.extracted_biomarkers?.length > 0 && (
+                      <div className="space-y-2">
+                        <span className="text-xs font-semibold uppercase tracking-wider text-slateInk-500 font-sans block">
+                          Extracted Biomarkers ({analyzedDocResult.extracted_biomarkers.length})
+                        </span>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                          {analyzedDocResult.extracted_biomarkers.map((bm: any, idx: number) => (
+                            <div
+                              key={idx}
+                              className={`p-3.5 rounded-2xl border bg-white ${
+                                bm.is_out_of_range
+                                  ? 'border-peach-300 ring-1 ring-peach-100'
+                                  : 'border-[#DCE2EA]'
+                              }`}
+                            >
+                              <div className="flex items-center justify-between text-xs">
+                                <span className="font-semibold text-slateInk-900">{bm.name}</span>
+                                <span
+                                  className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
+                                    bm.is_out_of_range
+                                      ? 'bg-peach-100 text-peach-800 border border-peach-200'
+                                      : 'bg-softMint-100 text-softMint-800 border border-softMint-200'
+                                  }`}
+                                >
+                                  {bm.is_out_of_range ? 'Out of Range' : 'Normal'}
+                                </span>
                               </div>
+                              <div className="text-lg font-serif font-bold text-slateInk-900 mt-1">
+                                {bm.value} <span className="text-xs font-sans text-slateInk-500">{bm.unit}</span>
+                              </div>
+                              <p className="text-[11px] text-slateInk-500 mt-0.5">Ref: {bm.reference_range}</p>
+                              {bm.notes && (
+                                <p className="text-[11px] text-slateInk-600 mt-1 italic">{bm.notes}</p>
+                              )}
                             </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Extracted Medications if any */}
+                    {analyzedDocResult.extracted_medications?.length > 0 && (
+                      <div className="space-y-2">
+                        <span className="text-xs font-semibold uppercase tracking-wider text-slateInk-500 font-sans block">
+                          Pharmacological Additions / Regimen
+                        </span>
+                        <div className="space-y-2">
+                          {analyzedDocResult.extracted_medications.map((med: any, idx: number) => {
+                            const mealInfo = getMedicationMealInfo(med);
+                            const medTime = getMedicationTime(med);
+                            return (
+                              <div key={idx} className="p-3.5 rounded-2xl bg-white border border-[#DCE2EA] flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                                <div>
+                                  <p className="font-semibold text-xs text-slateInk-900">{med.name} • {med.dosage}</p>
+                                  <p className="text-[11px] text-slateInk-500 mt-0.5">{med.instructions} • Timing: {med.timing}</p>
+                                </div>
+                                <div className="flex items-center gap-2 shrink-0">
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-semibold bg-white border border-[#DCE2EA] text-slateInk-800">
+                                    <Clock className="w-3 h-3 text-tranquil-600" />
+                                    <span>{medTime}</span>
+                                  </span>
+                                  <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-semibold border ${mealInfo.badgeClass}`}>
+                                    <Utensils className={`w-3 h-3 ${mealInfo.iconClass}`} />
+                                    <span>{mealInfo.label}</span>
+                                  </span>
+                                  <span className="text-[10px] font-medium bg-softMint-100 text-softMint-800 border border-softMint-200 px-2 py-0.5 rounded-full">
+                                    Added to Daily Regimen
+                                  </span>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Extracted Clinical Diagnoses & ICD Codes */}
+                    {analyzedDocResult.diagnoses?.length > 0 && (
+                      <div className="space-y-2">
+                        <span className="text-xs font-semibold uppercase tracking-wider text-slateInk-500 font-sans block">
+                          Extracted Clinical Diagnoses ({analyzedDocResult.diagnoses.length})
+                        </span>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                          {analyzedDocResult.diagnoses.map((diag: any, idx: number) => (
+                            <div key={idx} className="p-3 rounded-2xl bg-white border border-[#DCE2EA] flex items-center justify-between">
+                              <div>
+                                <p className="font-semibold text-xs text-slateInk-900">{diag.condition}</p>
+                                <p className="text-[11px] text-slateInk-500 mt-0.5 font-mono">ICD-10: {diag.icd10 || diag.icd_10_code || 'Clinical Assessment'}</p>
+                              </div>
+                              <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-peach-50 text-peach-800 border border-peach-200">
+                                Diagnosed
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Extracted Chronological Dates */}
+                    {analyzedDocResult.dates && (
+                      <div className="p-3.5 rounded-2xl bg-white border border-[#DCE2EA] space-y-2">
+                        <span className="text-[11px] font-semibold uppercase tracking-wider text-slateInk-500 font-sans block">
+                          Chronological Dates Detected
+                        </span>
+                        <div className="flex flex-wrap gap-2 text-xs">
+                          {analyzedDocResult.dates.document_date && (
+                            <span className="px-2.5 py-1 rounded-xl bg-slate-100 text-slateInk-700 border border-slate-200 flex items-center gap-1.5">
+                              <Calendar className="w-3.5 h-3.5 text-slateInk-500" />
+                              Doc Date: <strong>{analyzedDocResult.dates.document_date}</strong>
+                            </span>
                           )}
-
-                          {/* Medications Table */}
-                          {analyzedDocResult.extracted_medications?.length > 0 && (
-                            <div className="space-y-2">
-                              <span className="text-xs font-semibold uppercase tracking-wider text-slateInk-500 font-sans block">
-                                Pharmacological Additions / Regimen
-                              </span>
-                              <div className="space-y-2">
-                                {analyzedDocResult.extracted_medications.map((med: any, idx: number) => (
-                                  <div key={idx} className="p-3.5 rounded-2xl bg-white border border-[#DCE2EA] flex items-center justify-between">
-                                    <div>
-                                      <p className="font-semibold text-xs text-slateInk-900">{med.name} • {med.dosage}</p>
-                                      <p className="text-[11px] text-slateInk-500 mt-0.5">{med.instructions} • Timing: {med.timing}</p>
-                                    </div>
-                                    <span className="text-[10px] font-medium bg-softMint-100 text-softMint-800 border border-softMint-200 px-2.5 py-1 rounded-full">
-                                      Added to Daily Schedule
-                                    </span>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
+                          {analyzedDocResult.dates.admission_date && (
+                            <span className="px-2.5 py-1 rounded-xl bg-tranquil-50 text-tranquil-800 border border-tranquil-200 flex items-center gap-1.5">
+                              <Calendar className="w-3.5 h-3.5 text-tranquil-600" />
+                              Admission: <strong>{analyzedDocResult.dates.admission_date}</strong>
+                            </span>
+                          )}
+                          {analyzedDocResult.dates.discharge_date && (
+                            <span className="px-2.5 py-1 rounded-xl bg-softMint-50 text-softMint-800 border border-softMint-200 flex items-center gap-1.5">
+                              <Calendar className="w-3.5 h-3.5 text-softMint-600" />
+                              Discharge: <strong>{analyzedDocResult.dates.discharge_date}</strong>
+                            </span>
+                          )}
+                          {analyzedDocResult.dates.follow_up_date && (
+                            <span className="px-2.5 py-1 rounded-xl bg-peach-50 text-peach-800 border border-peach-200 flex items-center gap-1.5">
+                              <Clock className="w-3.5 h-3.5 text-peach-600" />
+                              Follow-Up: <strong>{analyzedDocResult.dates.follow_up_date}</strong>
+                            </span>
                           )}
                         </div>
-                      )}
-                    </div>
+                      </div>
+                    )}
+
+                    {/* AI Health Summary in Simple Language Preview */}
+                    {analyzedDocResult.ai_health_summary && (
+                      <div className="p-4 rounded-2xl bg-[#F0FDF4] border border-[#BBF7D0] space-y-2.5">
+                        <div className="flex items-center gap-2">
+                          <Sparkles className="w-4 h-4 text-softMint-700" />
+                          <h5 className="text-xs font-semibold uppercase tracking-wider text-softMint-900 font-sans">
+                            AI Plain-Language Summary
+                          </h5>
+                        </div>
+                        <p className="text-xs text-slateInk-800 leading-relaxed">
+                          {analyzedDocResult.ai_health_summary.plain_language_overview}
+                        </p>
+                        {analyzedDocResult.ai_health_summary.action_items?.length > 0 && (
+                          <div className="pt-2 border-t border-[#BBF7D0]">
+                            <p className="text-[11px] font-semibold text-softMint-900 mb-1">Recommended Everyday Steps:</p>
+                            <ul className="text-xs text-slateInk-700 space-y-1 list-disc list-inside">
+                              {analyzedDocResult.ai_health_summary.action_items.slice(0, 3).map((item: string, idx: number) => (
+                                <li key={idx}>{item}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -2645,119 +2568,648 @@ export default function Dashboard({ onNavigateToHome, onSignOut, initialTab }: D
             </div>
           )}
 
-          {/* ==================== TAB 3: RECORDS & LABS ==================== */}
+          {/* ==================== TAB 3: RECORDS, PLAIN LANGUAGE & UNIFIED PROFILE ==================== */}
           {activeTab === 'records' && (
             <div className="space-y-6 animate-tab-switch">
-              <header>
-                <h2 className="font-serif text-2xl font-normal text-slateInk-900">Medical Records & Labs</h2>
-                <p className="text-slateInk-500 text-sm mt-0.5">Parsed clinical reports and flagged biomarkers</p>
-              </header>
-
-              {/* Out of Range Biomarkers Banner (Subtle Peach Accent) */}
-              {outOfRangeBiomarkers.length > 0 && (
-                <section className="bg-[#FDF4EF] border border-[#F7C7B2] rounded-3xl p-5 sm:p-6 shadow-soft">
-                  <h3 className="text-sm font-semibold text-peach-700 mb-3 flex items-center gap-1.5">
-                    <AlertCircle className="w-4 h-4 text-peach-600" />
-                    Flagged Out-of-Range Biomarkers ({outOfRangeBiomarkers.length})
-                  </h3>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    {outOfRangeBiomarkers.map((bio, i) => (
-                      <div key={i} className="bg-white p-4 rounded-2xl border border-[#F7C7B2] shadow-xs card-hover-effect">
-                        <div className="flex justify-between items-start">
-                          <span className="text-xs font-semibold text-slateInk-900">{bio.name}</span>
-                          <span className="text-[10px] font-semibold text-peach-700 bg-peach-100 border border-peach-200 px-2 py-0.5 rounded-full">
-                            High
-                          </span>
-                        </div>
-                        <div className="text-xl font-serif text-slateInk-900 mt-1">
-                          {bio.value} <span className="text-xs font-sans text-slateInk-500">{bio.unit}</span>
-                        </div>
-                        <p className="text-[11px] text-slateInk-500 mt-0.5">Ref: {bio.reference_range}</p>
-                        {bio.interpretation && (
-                          <p className="text-[11px] text-slateInk-600 mt-1 italic">{bio.interpretation}</p>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </section>
-              )}
-
-              {/* Diagnostic Reports */}
-              <div className="space-y-4">
-                {reports.length === 0 ? (
-                  <div className="bg-white rounded-3xl p-8 sm:p-12 border border-[#DCE2EA] shadow-card text-center max-w-lg mx-auto my-4 animate-scroll-reveal">
-                    <div className="w-16 h-16 rounded-3xl bg-tranquil-50 border border-tranquil-200 text-tranquil-600 flex items-center justify-center mx-auto mb-4 shadow-xs">
-                      <FileText className="w-8 h-8 text-tranquil-600 animate-pulse-soft" />
-                    </div>
-                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-100 text-slateInk-700 text-xs font-semibold mb-2">
-                      <span className="w-2 h-2 rounded-full bg-amber-500"></span>
-                      0 Diagnostic Reports on File
+              {/* Header with Sub-Tab Navigation */}
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-2 border-b border-[#DCE2EA]">
+                <div>
+                  <div className="flex items-center space-x-2">
+                    <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-tranquil-100 text-tranquil-800 border border-tranquil-200">
+                      Unified Medical Intelligence
                     </span>
-                    <h3 className="font-serif text-xl sm:text-2xl font-normal text-slateInk-900 mt-1">
-                      No Clinical Reports Uploaded Yet
-                    </h3>
-                    <p className="text-xs sm:text-sm text-slateInk-500 mt-2.5 leading-relaxed font-light">
-                      All clinical reports have been reset to zero for this session. Upload a laboratory panel (Quest/Labcorp), doctor's prescription slip, or ambulatory Holter rhythm strip in the Optical Intake tab to run AI analysis and populate physiological correlations.
-                    </p>
-                    <div className="mt-6 flex flex-col sm:flex-row items-center justify-center gap-3">
-                      <button
-                        onClick={() => setActiveTab('intake')}
-                        className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-2xl bg-tranquil-600 hover:bg-tranquil-700 text-white font-semibold text-xs shadow-soft transition-all transform active:scale-95 cursor-pointer"
-                      >
-                        <Sparkles className="w-4 h-4 text-white" />
-                        <span>Go to Optical Intake Tab →</span>
-                      </button>
-                    </div>
+                    <span className="text-xs text-slateInk-400 font-sans">Core Health Record Pillars</span>
                   </div>
-                ) : (
-                  reports.map(report => (
-                    <div key={report.id} className="bg-white rounded-3xl p-6 border border-[#DCE2EA] shadow-card card-hover-effect">
-                      <div className="flex justify-between items-start mb-2">
-                        <div>
-                          <span className="text-[11px] font-semibold text-slateInk-400 uppercase tracking-wider block font-sans">
-                            {report.facility} • {report.date}
-                          </span>
-                          <h4 className="text-lg font-serif text-slateInk-900 mt-0.5">{report.title}</h4>
-                        </div>
-                        <span className="text-xs bg-tranquil-100 text-tranquil-800 border border-tranquil-200 px-3 py-1 rounded-full font-medium">
-                          {report.category}
-                        </span>
+                  <h2 className="font-serif text-2xl sm:text-3xl font-normal text-slateInk-900 mt-1">
+                    Medical Records & Unified Profile
+                  </h2>
+                  <p className="text-slateInk-600 text-sm mt-0.5 max-w-2xl font-light">
+                    Ingested diagnostic reports, empathetic plain-language interpretations, and chronological multi-source health timeline.
+                  </p>
+                </div>
+
+                {/* Sub-tab Pill Switcher */}
+                <div className="inline-flex p-1 bg-[#F1F5F9] rounded-2xl border border-[#DCE2EA] shadow-xs self-start sm:self-auto">
+                  <button
+                    onClick={() => setRecordsSubTab('reports')}
+                    className={`px-3.5 py-2 rounded-xl text-xs font-semibold transition-all flex items-center gap-1.5 ${
+                      recordsSubTab === 'reports'
+                        ? 'bg-white text-slateInk-900 shadow-xs border border-[#CBD5E1]'
+                        : 'text-slateInk-600 hover:text-slateInk-900'
+                    }`}
+                  >
+                    <FileText className="w-3.5 h-3.5 text-tranquil-600" />
+                    <span>Clinical Reports</span>
+                  </button>
+
+                  <button
+                    onClick={() => setRecordsSubTab('plain_summary')}
+                    className={`px-3.5 py-2 rounded-xl text-xs font-semibold transition-all flex items-center gap-1.5 ${
+                      recordsSubTab === 'plain_summary'
+                        ? 'bg-white text-slateInk-900 shadow-xs border border-[#CBD5E1]'
+                        : 'text-slateInk-600 hover:text-slateInk-900'
+                    }`}
+                  >
+                    <Sparkles className="w-3.5 h-3.5 text-softMint-600 animate-pulse-soft" />
+                    <span>AI Plain-Language Summary</span>
+                  </button>
+
+                  <button
+                    onClick={() => setRecordsSubTab('timeline')}
+                    className={`px-3.5 py-2 rounded-xl text-xs font-semibold transition-all flex items-center gap-1.5 ${
+                      recordsSubTab === 'timeline'
+                        ? 'bg-white text-slateInk-900 shadow-xs border border-[#CBD5E1]'
+                        : 'text-slateInk-600 hover:text-slateInk-900'
+                    }`}
+                  >
+                    <Layers className="w-3.5 h-3.5 text-tranquil-600" />
+                    <span>Unified Profile & Timeline</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* ----------------- SUB-VIEW 1: CLINICAL REPORTS & OUT-OF-RANGE BIOMARKERS ----------------- */}
+              {recordsSubTab === 'reports' && (
+                <div className="space-y-6">
+                  {/* Out of Range Biomarkers Banner (Subtle Peach Accent) */}
+                  {outOfRangeBiomarkers.length > 0 && (
+                    <section className="bg-[#FDF4EF] border border-[#F7C7B2] rounded-3xl p-5 sm:p-6 shadow-soft">
+                      <div className="flex items-center justify-between mb-3">
+                        <h3 className="text-sm font-semibold text-peach-700 flex items-center gap-1.5">
+                          <AlertCircle className="w-4 h-4 text-peach-600" />
+                          Flagged Out-of-Range Biomarkers ({outOfRangeBiomarkers.length})
+                        </h3>
+                        <button
+                          onClick={() => setRecordsSubTab('plain_summary')}
+                          className="text-xs text-peach-800 hover:text-peach-900 font-semibold underline underline-offset-2 flex items-center gap-1"
+                        >
+                          <Sparkles className="w-3.5 h-3.5 text-peach-700" />
+                          Explain All in Plain Language →
+                        </button>
                       </div>
 
-                      <p className="text-xs text-slateInk-700 bg-[#F8FAFC] p-3.5 rounded-2xl mb-4 border border-[#DCE2EA] leading-relaxed">
-                        {report.summary}
-                      </p>
-
-                      <div className="divide-y divide-[#DCE2EA]">
-                        {report.biomarkers.map(bio => (
-                          <div key={bio.id} className="py-2.5 flex items-center justify-between text-sm">
-                            <div>
-                              <div className="font-medium text-slateInk-900">{bio.name}</div>
-                              <div className="text-xs text-slateInk-400">Ref: {bio.reference_range}</div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                        {outOfRangeBiomarkers.map((bio, i) => (
+                          <div key={i} className="bg-white p-4 rounded-2xl border border-[#F7C7B2] shadow-xs card-hover-effect">
+                            <div className="flex justify-between items-start">
+                              <span className="text-xs font-semibold text-slateInk-900">{bio.name}</span>
+                              <span className="text-[10px] font-semibold text-peach-700 bg-peach-100 border border-peach-200 px-2 py-0.5 rounded-full">
+                                Outside Target
+                              </span>
                             </div>
-                            <div className="text-right">
-                              <div className="font-semibold text-slateInk-900 font-sans">
-                                {bio.value} {bio.unit}
-                              </div>
-                              <div>
-                                {bio.status === 'out_of_range' ? (
-                                  <span className="inline-block text-[10px] font-medium text-peach-700 bg-peach-100 px-2 py-0.5 rounded-full border border-peach-200">
-                                    Outside range
-                                  </span>
-                                ) : (
-                                  <span className="inline-block text-[10px] font-medium text-softMint-800 bg-softMint-100 px-2 py-0.5 rounded-full border border-softMint-200">
-                                    Normal
-                                  </span>
-                                )}
-                              </div>
+                            <div className="text-xl font-serif text-slateInk-900 mt-1">
+                              {bio.value} <span className="text-xs font-sans text-slateInk-500">{bio.unit}</span>
+                            </div>
+                            <p className="text-[11px] text-slateInk-500 mt-0.5">Ref: {bio.reference_range}</p>
+                            {bio.interpretation && (
+                              <p className="text-[11px] text-slateInk-600 mt-1 italic">{bio.interpretation}</p>
+                            )}
+
+                            <div className="mt-3 pt-2.5 border-t border-[#F1F5F9] flex justify-end">
+                              <button
+                                onClick={() => setExplainingModalBiomarker(bio)}
+                                className="inline-flex items-center gap-1 text-[11px] font-semibold text-tranquil-700 hover:text-tranquil-900 transition-colors"
+                              >
+                                <Sparkles className="w-3 h-3 text-softMint-600" />
+                                <span>Explain in Everyday Words →</span>
+                              </button>
                             </div>
                           </div>
                         ))}
                       </div>
+                    </section>
+                  )}
+
+                  {/* Diagnostic Reports Ingested */}
+                  <div className="space-y-4">
+                    {reports.map(report => (
+                      <div key={report.id} className="bg-white rounded-3xl p-6 border border-[#DCE2EA] shadow-card card-hover-effect">
+                        <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-2 mb-3">
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span className="text-[11px] font-semibold text-slateInk-400 uppercase tracking-wider font-sans">
+                                {report.facility} • {report.date}
+                              </span>
+                            </div>
+                            <h4 className="text-lg font-serif text-slateInk-900 mt-0.5">{report.title}</h4>
+                          </div>
+
+                          <div className="flex items-center gap-2 self-start sm:self-auto">
+                            <span className="text-xs bg-tranquil-100 text-tranquil-800 border border-tranquil-200 px-3 py-1 rounded-full font-medium">
+                              {report.category}
+                            </span>
+                            <button
+                              onClick={() => setRecordsSubTab('plain_summary')}
+                              className="text-xs px-2.5 py-1 rounded-full bg-softMint-50 text-softMint-800 border border-softMint-200 hover:bg-softMint-100 transition-colors font-medium flex items-center gap-1"
+                              title="View plain language translation"
+                            >
+                              <Sparkles className="w-3 h-3 text-softMint-600" />
+                              <span>AI Explanation</span>
+                            </button>
+                          </div>
+                        </div>
+
+                        <p className="text-xs text-slateInk-700 bg-[#F8FAFC] p-3.5 rounded-2xl mb-4 border border-[#DCE2EA] leading-relaxed">
+                          {report.summary}
+                        </p>
+
+                        <div className="divide-y divide-[#DCE2EA]">
+                          {report.biomarkers.map(bio => (
+                            <div key={bio.id} className="py-2.5 flex items-center justify-between text-sm">
+                              <div>
+                                <div className="font-medium text-slateInk-900">{bio.name}</div>
+                                <div className="text-xs text-slateInk-400">Ref: {bio.reference_range}</div>
+                              </div>
+                              <div className="text-right flex items-center gap-3">
+                                <div>
+                                  <div className="font-semibold text-slateInk-900 font-sans">
+                                    {bio.value} {bio.unit}
+                                  </div>
+                                  <div>
+                                    {bio.status === 'out_of_range' ? (
+                                      <span className="inline-block text-[10px] font-medium text-peach-700 bg-peach-100 px-2 py-0.5 rounded-full border border-peach-200">
+                                        Outside range
+                                      </span>
+                                    ) : (
+                                      <span className="inline-block text-[10px] font-medium text-softMint-800 bg-softMint-100 px-2 py-0.5 rounded-full border border-softMint-200">
+                                        Normal
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+
+                                {bio.status === 'out_of_range' && (
+                                  <button
+                                    onClick={() => setExplainingModalBiomarker(bio)}
+                                    className="p-1.5 rounded-xl bg-peach-50 text-peach-700 hover:bg-peach-100 border border-peach-200 transition-all text-xs"
+                                    title="Explain what this means in plain language"
+                                  >
+                                    <HelpCircle className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* ----------------- SUB-VIEW 2: AI HEALTH SUMMARY IN SIMPLE LANGUAGE ----------------- */}
+              {recordsSubTab === 'plain_summary' && (
+                <div className="space-y-6">
+                  {/* Hero Overview Digest Card */}
+                  <div className="bg-gradient-to-br from-[#F0FDF4] via-white to-[#F8FAFC] rounded-3xl p-6 sm:p-8 border-2 border-softMint-300 shadow-card space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-2.5">
+                        <div className="w-9 h-9 rounded-2xl bg-softMint-100 text-softMint-700 flex items-center justify-center">
+                          <Sparkles className="w-5 h-5 text-softMint-700" />
+                        </div>
+                        <div>
+                          <span className="text-[11px] font-semibold text-softMint-800 uppercase tracking-wider block font-sans">
+                            Everyday Language Digest
+                          </span>
+                          <h3 className="font-serif text-xl sm:text-2xl font-normal text-slateInk-900">
+                            {plainSummaryData?.summary_title || 'Plain-Language Health Intelligence Summary'}
+                          </h3>
+                        </div>
+                      </div>
+
+                      <span className="text-xs bg-white text-softMint-800 border border-softMint-200 px-3 py-1 rounded-full font-medium shadow-2xs">
+                        Empathetic AI Translation
+                      </span>
                     </div>
-                  ))
+
+                    <p className="text-sm sm:text-base text-slateInk-800 leading-relaxed font-light">
+                      {plainSummaryData?.plain_language_overview ||
+                        'Overall, your diagnostic records show that your body is managing a mild recovery and inflammatory load. Your liver and kidneys are filtering waste cleanly and your heart muscle is structurally healthy. The primary focus areas are supporting your body\'s recovery from a recent sleep deficit to help calm your resting heart rate, and maintaining your evening cholesterol medication.'}
+                    </p>
+
+                    {/* Reassuring Normal Markers Banner */}
+                    <div className="p-4 rounded-2xl bg-white border border-[#DCE2EA] flex items-start gap-3 shadow-xs">
+                      <ShieldCheck className="w-5 h-5 text-softMint-600 shrink-0 mt-0.5" />
+                      <div>
+                        <h4 className="text-xs font-semibold uppercase tracking-wider text-slateInk-900 font-sans">
+                          Reassuring Clinical Confirmation
+                        </h4>
+                        <p className="text-xs text-slateInk-600 mt-0.5 leading-relaxed">
+                          {plainSummaryData?.reassuring_findings ||
+                            'Vital biomarkers including kidney filtration (eGFR: 96 mL/min) and liver enzymes (ALT: 24 U/L) are completely optimal. Serial troponin tests ruled out heart muscle damage.'}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Section: What Abnormal Values Mean */}
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between px-1">
+                      <div>
+                        <h3 className="font-serif text-lg text-slateInk-900">What Your Abnormal Values Mean</h3>
+                        <p className="text-xs text-slateInk-500">Plain-language explanations without confusing medical jargon</p>
+                      </div>
+                      <span className="text-xs text-peach-700 bg-peach-50 border border-peach-200 px-2.5 py-1 rounded-full font-medium">
+                        {plainSummaryData?.abnormal_values?.length || 3} Attention Areas
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                      {(plainSummaryData?.abnormal_values || [
+                        {
+                          marker_name: "hs-CRP (C-Reactive Protein)",
+                          your_value: "3.4 mg/L",
+                          normal_range: "< 1.0 mg/L",
+                          what_it_means: "Your level is higher than the standard target (< 1.0 mg/L). This suggests your body is dealing with active low-grade inflammation or recovery strain.",
+                          why_it_happened: "Triggered by the combination of restricted sleep (5.7 hours average) and physiological fatigue over the last 8 days.",
+                          what_to_ask_your_doctor: "Do you agree my 8-day resting heart rate rise and hs-CRP are driven by sleep debt and autonomic recovery load?"
+                        },
+                        {
+                          marker_name: "LDL Cholesterol",
+                          your_value: "142 mg/dL",
+                          normal_range: "< 100 mg/dL",
+                          what_it_means: "Your LDL level is above the desirable target (< 100 mg/dL). Over time, extra LDL particles can form fatty deposits inside blood vessels.",
+                          why_it_happened: "Influenced by genetics, dietary saturated fats, and liver cholesterol clearance rates.",
+                          what_to_ask_your_doctor: "Given my 142 mg/dL level, is continuing Atorvastatin 20mg daily adequate to lower LDL below 100 mg/dL?"
+                        },
+                        {
+                          marker_name: "Fasting Glucose",
+                          your_value: "106 mg/dL",
+                          normal_range: "70 - 99 mg/dL",
+                          what_it_means: "Your reading is slightly above the optimal 70–99 mg/dL threshold, indicating borderline impaired fasting glucose.",
+                          why_it_happened: "Can result from acute stress hormones (cortisol) and poor sleep quality reducing morning insulin sensitivity.",
+                          what_to_ask_your_doctor: "Should we check my HbA1c to assess longer-term 90-day glycemic trends?"
+                        }
+                      ]).map((item: any, idx: number) => (
+                        <div key={idx} className="bg-white rounded-3xl p-5 sm:p-6 border border-[#DCE2EA] shadow-card space-y-3.5 card-hover-effect">
+                          <div className="flex items-start justify-between">
+                            <div>
+                              <span className="text-xs font-semibold text-slateInk-900 font-sans block">{item.marker_name}</span>
+                              <div className="flex items-center gap-2 mt-1">
+                                <span className="text-lg font-serif font-bold text-peach-700">{item.your_value}</span>
+                                <span className="text-xs text-slateInk-400 font-mono">(Normal: {item.normal_range})</span>
+                              </div>
+                            </div>
+                            <span className="text-[10px] font-semibold text-peach-700 bg-peach-100 border border-peach-200 px-2 py-0.5 rounded-full">
+                              Requires Attention
+                            </span>
+                          </div>
+
+                          <div className="space-y-2 text-xs">
+                            <div className="p-3 rounded-2xl bg-[#F8FAFC] border border-[#DCE2EA]">
+                              <span className="font-semibold text-slateInk-900 block mb-0.5">What this means:</span>
+                              <p className="text-slateInk-700 leading-relaxed">{item.what_it_means}</p>
+                            </div>
+
+                            <div className="p-3 rounded-2xl bg-white border border-[#DCE2EA]">
+                              <span className="font-semibold text-slateInk-900 block mb-0.5">Why it happened:</span>
+                              <p className="text-slateInk-600 leading-relaxed">{item.why_it_happened}</p>
+                            </div>
+
+                            <div className="p-3 rounded-2xl bg-[#FEF3C7]/40 border border-[#FDE68A]">
+                              <span className="font-semibold text-amber-900 block mb-0.5">What to ask your doctor:</span>
+                              <p className="text-amber-800 italic leading-relaxed">"{item.what_to_ask_your_doctor}"</p>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Everyday Action Plan & Doctor Guide Grid */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {/* Action Plan */}
+                    <div className="bg-white rounded-3xl p-6 border border-[#DCE2EA] shadow-card space-y-3">
+                      <div className="flex items-center space-x-2">
+                        <CheckCircle2 className="w-4 h-4 text-softMint-600" />
+                        <h4 className="font-serif text-base font-semibold text-slateInk-900">Recommended Patient Action Plan</h4>
+                      </div>
+                      <ul className="space-y-2 text-xs text-slateInk-700">
+                        {(plainSummaryData?.action_items || [
+                          "Prioritize 7.5 to 8.5 hours of uninterrupted sleep to allow resting heart rate to stabilize.",
+                          "Take Magnesium Glycinate 200mg 30 minutes before bedtime to support parasympathetic recovery.",
+                          "Continue Atorvastatin 20mg nightly to optimize lipid profile and vascular protection.",
+                          "Stay hydrated and avoid strenuous threshold cardio workouts until resting heart rate trend returns below 72 bpm."
+                        ]).map((act: string, idx: number) => (
+                          <li key={idx} className="flex items-start gap-2 bg-[#F8FAFC] p-2.5 rounded-xl border border-[#DCE2EA]">
+                            <span className="w-4 h-4 rounded-full bg-softMint-100 text-softMint-700 text-[10px] font-bold flex items-center justify-center shrink-0 mt-0.5">
+                              {idx + 1}
+                            </span>
+                            <span className="leading-relaxed">{act}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+
+                    {/* Doctor Discussion Guide */}
+                    <div className="bg-white rounded-3xl p-6 border border-[#DCE2EA] shadow-card space-y-3">
+                      <div className="flex items-center space-x-2">
+                        <Activity className="w-4 h-4 text-tranquil-600" />
+                        <h4 className="font-serif text-base font-semibold text-slateInk-900">Physician Discussion Guide</h4>
+                      </div>
+                      <ul className="space-y-2 text-xs text-slateInk-700">
+                        {(plainSummaryData?.doctor_discussion_guide || [
+                          "My resting heart rate rose from 69 to 78 bpm over 8 days alongside hs-CRP of 3.4 mg/L. Do you agree this is driven by sleep debt and recovery load?",
+                          "Should we recheck my hs-CRP and lipid panel in 4–6 weeks to confirm the trend is heading down?",
+                          "Are there any additional magnesium or CoQ10 dosage timing tweaks you recommend for my evening routine?"
+                        ]).map((guide: string, idx: number) => (
+                          <li key={idx} className="bg-tranquil-50/50 p-3 rounded-xl border border-tranquil-200 text-tranquil-900 leading-relaxed italic">
+                            "{guide}"
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* ----------------- SUB-VIEW 3: UNIFIED HEALTH PROFILE & CHRONOLOGICAL TIMELINE ----------------- */}
+              {recordsSubTab === 'timeline' && (
+                <div className="space-y-6">
+                  {/* Unified Patient Profile Header Snapshot */}
+                  <div className="bg-white rounded-3xl p-6 sm:p-7 border border-[#DCE2EA] shadow-card space-y-5">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-[#DCE2EA]">
+                      <div className="flex items-center space-x-3.5">
+                        <div className="w-12 h-12 rounded-2xl bg-tranquil-100 text-tranquil-700 flex items-center justify-center font-bold text-lg">
+                          {patient?.name?.[0] || 'E'}
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <h3 className="font-serif text-xl font-semibold text-slateInk-900">
+                              {unifiedProfileData?.full_name || patient?.name || 'Eleanor Vance'}
+                            </h3>
+                            <span className="text-[10px] font-semibold bg-softMint-100 text-softMint-800 border border-softMint-200 px-2 py-0.5 rounded-full">
+                              Unified Health Profile
+                            </span>
+                          </div>
+                          <p className="text-xs text-slateInk-500 mt-0.5">
+                            Age: {unifiedProfileData?.age || 42} • Blood Type: {unifiedProfileData?.blood_type || 'O+'} • Primary MD: {unifiedProfileData?.primary_physician || 'Dr. Sarah Jenkins, MD, FACC'}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="text-xs text-slateInk-500 bg-[#F8FAFC] px-3.5 py-2 rounded-2xl border border-[#DCE2EA]">
+                        <span>Emergency Proxy: <strong>{unifiedProfileData?.emergency_contact?.name || 'David Vance'}</strong> ({unifiedProfileData?.emergency_contact?.phone || '+1 (555) 382-9104'})</span>
+                      </div>
+                    </div>
+
+                    {/* Active Diagnoses & ICD Codes Grid */}
+                    <div className="space-y-2">
+                      <span className="text-xs font-semibold uppercase tracking-wider text-slateInk-500 font-sans block">
+                        Active Clinical Diagnoses & ICD-10 Classification
+                      </span>
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        {(diagnosesList.length > 0 ? diagnosesList : [
+                          { condition_name: "Sinus Tachycardia Secondary to Sleep Deficit", icd_code: "R00.0", diagnosed_date: "10 Oct 2026", severity: "moderate" },
+                          { condition_name: "Borderline Dyslipidemia (Elevated LDL)", icd_code: "E78.5", diagnosed_date: "04 Oct 2026", severity: "mild" },
+                          { condition_name: "Subclinical Systemic Inflammation", icd_code: "R65.20", diagnosed_date: "28 Sep 2026", severity: "moderate" }
+                        ]).slice(0, 3).map((diag: any, idx: number) => (
+                          <div key={idx} className="p-3.5 rounded-2xl bg-[#F8FAFC] border border-[#DCE2EA]">
+                            <div className="flex items-center justify-between text-xs">
+                              <span className="font-semibold text-slateInk-900">{diag.condition_name}</span>
+                              <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full bg-peach-100 text-peach-800 border border-peach-200">
+                                {diag.icd_code || 'ICD-10'}
+                              </span>
+                            </div>
+                            <p className="text-[11px] text-slateInk-500 mt-1">Diagnosed: {diag.diagnosed_date}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Organ System Matrix */}
+                    <div className="space-y-2">
+                      <span className="text-xs font-semibold uppercase tracking-wider text-slateInk-500 font-sans block">
+                        Organ System Biomarker Architecture
+                      </span>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                        <div className="p-3 rounded-2xl bg-white border border-[#DCE2EA]">
+                          <span className="text-[11px] text-slateInk-400 block font-medium">Cardiovascular & Lipid</span>
+                          <span className="text-sm font-serif font-bold text-slateInk-900 mt-0.5 block">LDL 142 • RHR 78</span>
+                          <span className="text-[10px] text-peach-700">Moderate Drift</span>
+                        </div>
+                        <div className="p-3 rounded-2xl bg-white border border-[#DCE2EA]">
+                          <span className="text-[11px] text-slateInk-400 block font-medium">Metabolic & Glycemic</span>
+                          <span className="text-sm font-serif font-bold text-slateInk-900 mt-0.5 block">Glucose 106 • HbA1c 5.8%</span>
+                          <span className="text-[10px] text-peach-700">Borderline</span>
+                        </div>
+                        <div className="p-3 rounded-2xl bg-white border border-[#DCE2EA]">
+                          <span className="text-[11px] text-slateInk-400 block font-medium">Immune & Inflammatory</span>
+                          <span className="text-sm font-serif font-bold text-slateInk-900 mt-0.5 block">hs-CRP 3.4 • WBC 7.4</span>
+                          <span className="text-[10px] text-peach-700">Elevated hs-CRP</span>
+                        </div>
+                        <div className="p-3 rounded-2xl bg-white border border-[#DCE2EA]">
+                          <span className="text-[11px] text-slateInk-400 block font-medium">Renal & Hepatic</span>
+                          <span className="text-sm font-serif font-bold text-slateInk-900 mt-0.5 block">eGFR 96 • ALT 24</span>
+                          <span className="text-[10px] text-softMint-700">Optimal Integrity</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Chronological Multi-Source Timeline */}
+                  <div className="space-y-4">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-1">
+                      <div>
+                        <h3 className="font-serif text-lg text-slateInk-900">Unified Chronological Timeline</h3>
+                        <p className="text-xs text-slateInk-500">Cross-referencing hospital stays, prescriptions, labs, and wearable alerts</p>
+                      </div>
+
+                      {/* Category Filters */}
+                      <div className="flex flex-wrap gap-1.5 text-xs">
+                        {['all', 'Hospital Care', 'Medications', 'Lab Diagnostics', 'Cardiovascular & Recovery'].map(cat => (
+                          <button
+                            key={cat}
+                            onClick={() => setTimelineFilter(cat)}
+                            className={`px-3 py-1 rounded-full text-xs font-medium transition-all ${
+                              timelineFilter === cat
+                                ? 'bg-tranquil-600 text-white shadow-xs'
+                                : 'bg-white text-slateInk-600 border border-[#DCE2EA] hover:border-tranquil-300'
+                            }`}
+                          >
+                            {cat === 'all' ? 'All Sources' : cat}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Timeline Event Feed */}
+                    <div className="relative pl-6 space-y-4 before:absolute before:left-2.5 before:top-3 before:bottom-3 before:w-0.5 before:bg-[#E2E8F0]">
+                      {(timelineEvents.length > 0 ? timelineEvents : [
+                        {
+                          id: 1,
+                          date: "11 Oct 2026",
+                          category: "Cardiovascular & Recovery",
+                          title: "8-Day Consecutive Resting Heart Rate Elevation",
+                          facility_or_source: "Apple Watch Continuous Stream",
+                          summary: "Resting heart rate climbed steadily from 69 to 78 bpm over 8 consecutive days alongside shortened sleep (5.7h).",
+                          plain_language_explanation: "Your smartwatch detected a multi-day upward drift in heart rate, indicating autonomic nervous system strain.",
+                          status: "alert"
+                        },
+                        {
+                          id: 2,
+                          date: "10 Oct 2026",
+                          category: "Hospital Care",
+                          title: "Mercy Health Hospital Discharge Summary",
+                          facility_or_source: "Mercy Trauma Center & Acute Care",
+                          summary: "Inpatient telemetry monitoring confirmed benign sinus tachycardia. Serial troponins negative (< 0.01 ng/mL). Discharged with outpatient care directives.",
+                          plain_language_explanation: "Hospital evaluation confirmed your heart is physically healthy, but your nervous system needs recovery and sleep.",
+                          status: "completed"
+                        },
+                        {
+                          id: 3,
+                          date: "09 Oct 2026",
+                          category: "Medications",
+                          title: "Prescription Regimen Update (Dr. Sarah Jenkins)",
+                          facility_or_source: "Mercy Cardiovascular Associates",
+                          summary: "CoQ10 (Ubiquinol 100mg) initiated as statin adjunct. Confirmed ongoing Atorvastatin 20mg and Magnesium Glycinate 200mg.",
+                          plain_language_explanation: "Your cardiologist added CoQ10 to protect your muscle energy while on cholesterol medication.",
+                          status: "completed"
+                        },
+                        {
+                          id: 4,
+                          date: "07 Oct 2026",
+                          category: "Diagnostics",
+                          title: "24-Hour Ambulatory Holter Rhythm Strip",
+                          facility_or_source: "Mercy Cardiology Telemetry",
+                          summary: "24h average heart rate 74 bpm. Nocturnal arousal peaks at 91 bpm matching sleep awakenings. No ventricular arrhythmias.",
+                          plain_language_explanation: "A 24-hour heart monitor verified that your daytime rhythm is normal and night spikes are caused by brief wakeups.",
+                          status: "attention"
+                        },
+                        {
+                          id: 5,
+                          date: "04 Oct 2026",
+                          category: "Lab Diagnostics",
+                          title: "Comprehensive Metabolic Panel & Lipid Profile",
+                          facility_or_source: "Quest Diagnostics Central Lab",
+                          summary: "Elevated LDL Cholesterol (142 mg/dL) and Fasting Glucose (106 mg/dL). Normal liver (ALT 24 U/L) and renal filtration (eGFR 96 mL/min).",
+                          plain_language_explanation: "Blood tests showed slightly high cholesterol and blood sugar, while your liver and kidneys are filtering cleanly.",
+                          status: "attention"
+                        }
+                      ])
+                        .filter((ev: any) => timelineFilter === 'all' || ev.category?.toLowerCase().includes(timelineFilter.toLowerCase()))
+                        .map((ev: any) => (
+                          <div key={ev.id} className="relative bg-white p-5 rounded-3xl border border-[#DCE2EA] shadow-xs card-hover-effect">
+                            <span
+                              className={`absolute -left-[27px] top-6 w-3 h-3 rounded-full border-2 border-white ring-2 ${
+                                ev.status === 'alert'
+                                  ? 'bg-peach-500 ring-peach-200'
+                                  : ev.status === 'attention'
+                                  ? 'bg-amber-500 ring-amber-200'
+                                  : 'bg-softMint-500 ring-softMint-200'
+                              }`}
+                            />
+
+                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2">
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs font-semibold font-mono text-slateInk-400">
+                                  {ev.date}
+                                </span>
+                                <span className="text-[10px] font-semibold px-2.5 py-0.5 rounded-full bg-slate-100 text-slateInk-700 border border-slate-200">
+                                  {ev.category}
+                                </span>
+                              </div>
+                              <span className="text-xs text-slateInk-500 font-sans">
+                                {ev.facility_or_source}
+                              </span>
+                            </div>
+
+                            <h4 className="font-serif text-base font-semibold text-slateInk-900 mt-1">
+                              {ev.title}
+                            </h4>
+
+                            <p className="text-xs text-slateInk-600 mt-1 leading-relaxed">
+                              {ev.summary}
+                            </p>
+
+                            {ev.plain_language_explanation && (
+                              <div className="mt-3 p-3 rounded-2xl bg-[#F8FAFC] border border-[#E2E8F0] text-xs text-slateInk-700 flex items-start gap-2">
+                                <Sparkles className="w-3.5 h-3.5 text-softMint-600 shrink-0 mt-0.5" />
+                                <div>
+                                  <span className="font-semibold text-slateInk-900 block text-[11px]">Plain Language Meaning:</span>
+                                  <p className="text-slateInk-700 leading-relaxed">{ev.plain_language_explanation}</p>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Biomarker Explainer Quick Modal */}
+              <AnimatePresence>
+                {explainingModalBiomarker && (
+                  <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs">
+                    <motion.div
+                      initial={{ scale: 0.95, opacity: 0 }}
+                      animate={{ scale: 1, opacity: 1 }}
+                      exit={{ scale: 0.95, opacity: 0 }}
+                      className="bg-white rounded-3xl p-6 sm:p-7 max-w-lg w-full border border-[#DCE2EA] shadow-2xl space-y-4"
+                    >
+                      <div className="flex items-start justify-between">
+                        <div className="flex items-center space-x-2.5">
+                          <div className="w-9 h-9 rounded-2xl bg-peach-100 text-peach-700 flex items-center justify-center">
+                            <Sparkles className="w-4 h-4 text-peach-700" />
+                          </div>
+                          <div>
+                            <span className="text-[10px] font-semibold text-peach-700 uppercase tracking-wider block font-sans">
+                              Biomarker Translation
+                            </span>
+                            <h3 className="font-serif text-lg font-semibold text-slateInk-900">
+                              {explainingModalBiomarker.name}
+                            </h3>
+                          </div>
+                        </div>
+
+                        <button
+                          onClick={() => setExplainingModalBiomarker(null)}
+                          className="p-1 rounded-xl text-slateInk-400 hover:text-slateInk-700 hover:bg-slate-100 transition-colors"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+
+                      <div className="p-3 rounded-2xl bg-[#FDF4EF] border border-[#F7C7B2] flex items-center justify-between text-xs">
+                        <span className="font-medium text-peach-900">Your Reading:</span>
+                        <span className="font-bold text-peach-800 font-serif text-base">
+                          {explainingModalBiomarker.value} {explainingModalBiomarker.unit}
+                        </span>
+                        <span className="text-slateInk-500 font-mono text-[11px]">
+                          Ref: {explainingModalBiomarker.reference_range}
+                        </span>
+                      </div>
+
+                      <div className="space-y-2.5 text-xs">
+                        <div className="p-3 rounded-2xl bg-[#F8FAFC] border border-[#DCE2EA]">
+                          <span className="font-semibold text-slateInk-900 block mb-0.5">What this means for you:</span>
+                          <p className="text-slateInk-700 leading-relaxed">
+                            {explainingModalBiomarker.interpretation ||
+                              `This biomarker is outside the standard reference benchmark. In Eleanor's case, it directly correlates with the 8-day consecutive resting heart rate drift and cumulative sleep deficit.`}
+                          </p>
+                        </div>
+
+                        <div className="p-3 rounded-2xl bg-[#FEF3C7]/40 border border-[#FDE68A]">
+                          <span className="font-semibold text-amber-900 block mb-0.5">Recommended question for Dr. Jenkins:</span>
+                          <p className="text-amber-800 italic leading-relaxed">
+                            "Given my {explainingModalBiomarker.name} reading of {explainingModalBiomarker.value} {explainingModalBiomarker.unit}, what recovery timeframe should we expect once sleep is restored?"
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="pt-2 flex justify-end">
+                        <button
+                          onClick={() => setExplainingModalBiomarker(null)}
+                          className="px-4 py-2 rounded-2xl bg-tranquil-600 hover:bg-tranquil-700 text-white text-xs font-semibold shadow-soft transition-all"
+                        >
+                          Got It, Close
+                        </button>
+                      </div>
+                    </motion.div>
+                  </div>
                 )}
-              </div>
+              </AnimatePresence>
             </div>
           )}
 
@@ -2853,7 +3305,7 @@ export default function Dashboard({ onNavigateToHome, onSignOut, initialTab }: D
                       Emergency Information for First Responders & Good Samaritans
                     </h3>
                     <p className="text-[#4F5F73] text-xs sm:text-sm mt-1 leading-relaxed max-w-3xl font-light">
-                      If the patient (<strong className="text-[#18202A]">{patient?.name || 'Eleanor Vance'}</strong>) is found injured, unconscious, or in an accident, use the clinical directives and one-tap emergency contacts below.
+                      If the patient (<strong className="text-[#18202A]">Meera Sharma</strong>) is found injured, unconscious, or in an accident, use the clinical directives and one-tap emergency contacts below.
                     </p>
                   </div>
 
@@ -2864,211 +3316,326 @@ export default function Dashboard({ onNavigateToHome, onSignOut, initialTab }: D
                         Blood Group
                       </span>
                       <span className="text-lg font-serif font-bold text-peach-700 mt-0.5 block">
-                        {emergencyPass?.blood_type || 'Pending Verification'}
+                        O+ (Rh Positive)
                       </span>
-                      <span className="text-[10px] text-[#4F5F73] mt-0.5 block">
-                        {emergencyPass?.blood_type?.includes('O') ? 'Universal Red Cell Donor' : 'Clinical Blood Profile'}
-                      </span>
+                      <span className="text-[10px] text-[#4F5F73] mt-0.5 block">Universal Red Cell Donor</span>
                     </div>
 
                     <div className="bg-white p-3.5 rounded-2xl border border-[#F7C7B2] shadow-xs">
                       <span className="text-[10px] font-bold uppercase tracking-wider text-peach-700 block font-sans">
                         ⚠️ Severe Allergies
                       </span>
-                      <span className="text-xs font-bold text-peach-800 mt-0.5 block truncate">
-                        {emergencyPass?.allergies || 'None recorded'}
+                      <span className="text-xs font-bold text-peach-800 mt-0.5 block">
+                        PENICILLIN (Anaphylaxis)
                       </span>
-                      <span className="text-[10px] text-[#4F5F73] mt-0.5 block">Verified clinical record</span>
+                      <span className="text-[10px] text-[#4F5F73] mt-0.5 block">Also avoid Sulfa antibiotics</span>
                     </div>
 
                     <div className="bg-white p-3.5 rounded-2xl border border-[#DCE2EA] shadow-xs">
                       <span className="text-[10px] font-bold uppercase tracking-wider text-[#8E9CAE] block font-sans">
-                        Emergency Contact
+                        Trauma Medication Note
                       </span>
-                      <span className="text-xs font-bold text-softMint-700 mt-0.5 block truncate">
-                        {emergencyPass?.emergency_contact_name || 'Not yet configured'}
+                      <span className="text-xs font-bold text-softMint-700 mt-0.5 block">
+                        NO Blood Thinners
                       </span>
-                      <span className="text-[10px] text-[#4F5F73] mt-0.5 block truncate">
-                        {emergencyPass?.emergency_contact_phone || 'Add in Emergency ID'}
-                      </span>
+                      <span className="text-[10px] text-[#4F5F73] mt-0.5 block">Not on anticoagulants</span>
                     </div>
 
                     <div className="bg-white p-3.5 rounded-2xl border border-[#DCE2EA] shadow-xs">
                       <span className="text-[10px] font-bold uppercase tracking-wider text-[#8E9CAE] block font-sans">
-                        Attending Physician
+                        Medical Implants
                       </span>
-                      <span className="text-xs font-bold text-[#18202A] mt-0.5 block truncate">
-                        {emergencyPass?.physician_name || 'Not yet configured'}
+                      <span className="text-xs font-bold text-[#18202A] mt-0.5 block">
+                        None / No Pacemaker
                       </span>
-                      <span className="text-[10px] text-[#4F5F73] mt-0.5 block">
-                        {emergencyPass?.hospital_preference || 'Nearest Emergency Center'}
-                      </span>
+                      <span className="text-[10px] text-[#4F5F73] mt-0.5 block">Organ Donor: Yes</span>
                     </div>
                   </div>
 
                   {/* Immediate 1-Tap Emergency Calling Links */}
                   <div className="pt-2 flex flex-wrap items-center gap-3">
-                    {emergencyPass?.emergency_contact_phone ? (
-                      <a
-                        href={`tel:${emergencyPass.emergency_contact_phone}`}
-                        className="inline-flex items-center space-x-2 px-4 py-2.5 rounded-2xl bg-tranquil-600 text-white text-xs sm:text-sm font-semibold hover:bg-tranquil-700 shadow-soft transition-all transform active:scale-95"
-                      >
-                        <Phone className="w-4 h-4 text-white animate-pulse-soft" />
-                        <span>Call {emergencyPass.emergency_contact_name}: {emergencyPass.emergency_contact_phone}</span>
-                      </a>
-                    ) : (
-                      <button
-                        onClick={() => setIsEmergencyModalOpen(true)}
-                        className="inline-flex items-center space-x-2 px-4 py-2.5 rounded-2xl bg-[#DCEDE4] hover:bg-[#CDE3D7] text-[#2B6449] text-xs sm:text-sm font-semibold border border-[#BED5C9] shadow-xs transition-all"
-                      >
-                        <Phone className="w-4 h-4 text-softMint-700" />
-                        <span>Configure Primary Emergency Contact</span>
-                      </button>
-                    )}
+                    <a
+                      href="tel:+15552348901"
+                      className="inline-flex items-center space-x-2 px-4 py-2.5 rounded-2xl bg-tranquil-600 text-white text-xs sm:text-sm font-semibold hover:bg-tranquil-700 shadow-soft transition-all transform active:scale-95"
+                    >
+                      <Phone className="w-4 h-4 text-white animate-pulse-soft" />
+                      <span>Call Spouse: Rohan Kapoor (+1 555-234-8901)</span>
+                    </a>
 
-                    {emergencyPass?.physician_phone && (
-                      <a
-                        href={`tel:${emergencyPass.physician_phone}`}
-                        className="inline-flex items-center space-x-2 px-4 py-2.5 rounded-2xl bg-[#DCEDE4] hover:bg-[#CDE3D7] text-[#2B6449] text-xs sm:text-sm font-semibold border border-[#BED5C9] shadow-xs transition-all"
-                      >
-                        <Phone className="w-4 h-4 text-softMint-700" />
-                        <span>Call Physician ({emergencyPass.physician_name}): {emergencyPass.physician_phone}</span>
-                      </a>
-                    )}
+                    <a
+                      href="tel:+15558724412"
+                      className="inline-flex items-center space-x-2 px-4 py-2.5 rounded-2xl bg-[#DCEDE4] hover:bg-[#CDE3D7] text-[#2B6449] text-xs sm:text-sm font-semibold border border-[#BED5C9] shadow-xs transition-all"
+                    >
+                      <Phone className="w-4 h-4 text-softMint-700" />
+                      <span>Call Mother: Sunita Sharma (+1 555-872-4412)</span>
+                    </a>
 
                     <span className="text-xs text-[#4F5F73] font-sans">
-                      Hospital of Record: <strong className="text-[#18202A]">{emergencyPass?.hospital_preference || 'Mercy Health Trauma Center'}</strong>
+                      Hospital: <strong className="text-[#18202A]">Mercy Health Trauma Center</strong>
                     </span>
                   </div>
                 </div>
               </section>
 
-              {/* ==================== CARE NETWORK MEMBERS (DYNAMIC GRID) ==================== */}
+              {/* ==================== CARE NETWORK MEMBERS (ELABORATE GRID) ==================== */}
               <section className="space-y-4">
                 <div className="flex items-center justify-between px-1">
                   <div>
                     <h3 className="font-serif text-xl font-normal text-[#18202A]">Care Network Members</h3>
                     <p className="text-[#4F5F73] text-xs">People authorized to receive alerts, trends, and clinical briefs</p>
                   </div>
-                  <span className="text-xs text-[#8E9CAE] font-medium bg-[#F8FAFC] border border-[#DCE2EA] px-2.5 py-0.5 rounded-full">
-                    {careMembers.length} active {careMembers.length === 1 ? 'link' : 'links'}
-                  </span>
+                  <span className="text-xs text-[#8E9CAE]">4 active links</span>
                 </div>
 
-                {careMembers.length === 0 ? (
-                  <div className="bg-white rounded-3xl p-8 sm:p-12 border border-[#DCE2EA] shadow-card text-center max-w-lg mx-auto my-4 animate-scroll-reveal">
-                    <div className="w-16 h-16 rounded-3xl bg-tranquil-50 border border-tranquil-200 text-tranquil-600 flex items-center justify-center mx-auto mb-4 shadow-xs">
-                      <Users className="w-8 h-8 text-tranquil-600 animate-pulse-soft" />
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* Member 1: Rohan Kapoor */}
+                  <div className="bg-white rounded-3xl p-5 sm:p-6 border border-[#DCE2EA] shadow-card space-y-4 card-hover-effect">
+                    <div className="flex items-start justify-between">
+                      <div className="flex items-center space-x-3.5">
+                        <div className="w-12 h-12 rounded-2xl bg-tranquil-100 text-tranquil-700 font-serif font-bold text-lg flex items-center justify-center border border-tranquil-200">
+                          RK
+                        </div>
+                        <div>
+                          <div className="flex items-center space-x-2">
+                            <h4 className="font-serif text-base font-semibold text-[#18202A]">Rohan Kapoor</h4>
+                            <span className="text-[10px] font-bold text-peach-800 bg-[#FDF4EF] px-2 py-0.5 rounded-full border border-[#F7C7B2]">
+                              Primary Proxy
+                            </span>
+                          </div>
+                          <p className="text-xs text-[#4F5F73]">Spouse • Emergency Contact</p>
+                        </div>
+                      </div>
+
+                      <span className="text-[11px] font-medium text-softMint-800 bg-[#DCEDE4] border border-[#BED5C9] px-2.5 py-1 rounded-full animate-pulse-soft">
+                        Live Sync: 8m ago
+                      </span>
                     </div>
-                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-100 text-slateInk-700 text-xs font-semibold mb-2">
-                      <span className="w-2 h-2 rounded-full bg-amber-500"></span>
-                      0 Caregivers Connected
-                    </span>
-                    <h3 className="font-serif text-xl sm:text-2xl font-normal text-slateInk-900 mt-1">
-                      No Caregivers Connected Yet
-                    </h3>
-                    <p className="text-xs sm:text-sm text-slateInk-500 mt-2.5 leading-relaxed font-light">
-                      Your Care Circle has been reset for this new registration. Invite a partner, parent, child, or attending physician to receive continuous vitals summaries, out-of-range drift alerts, and emergency medical directives.
-                    </p>
-                    <div className="mt-6 flex flex-col sm:flex-row items-center justify-center gap-3">
-                      <button
-                        onClick={() => setIsInviteModalOpen(true)}
-                        className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-2xl bg-tranquil-600 hover:bg-tranquil-700 text-white font-semibold text-xs shadow-soft transition-all transform active:scale-95 cursor-pointer"
+
+                    <div className="space-y-2 text-xs">
+                      <div className="flex items-center justify-between text-[#4F5F73]">
+                        <span>Direct Phone:</span>
+                        <a href="tel:+15552348901" className="font-semibold text-[#18202A] hover:underline">
+                          +1 (555) 234-8901
+                        </a>
+                      </div>
+                      <div className="flex items-center justify-between text-[#4F5F73]">
+                        <span>Shared Sensors:</span>
+                        <span className="font-medium text-[#2C3847]">Oura Ring, GPS Beacon, Sleep Log</span>
+                      </div>
+                    </div>
+
+                    {/* Permission Chips */}
+                    <div className="flex flex-wrap gap-1.5 pt-1">
+                      <span className="text-[10px] font-medium bg-[#F8FAFC] text-[#2C3847] px-2 py-0.5 rounded-md border border-[#DCE2EA]">
+                        ✓ Real-Time Vitals
+                      </span>
+                      <span className="text-[10px] font-medium bg-[#F8FAFC] text-[#2C3847] px-2 py-0.5 rounded-md border border-[#DCE2EA]">
+                        ✓ Emergency Override
+                      </span>
+                      <span className="text-[10px] font-medium bg-[#F8FAFC] text-[#2C3847] px-2 py-0.5 rounded-md border border-[#DCE2EA]">
+                        ✓ Medication Tracking
+                      </span>
+                    </div>
+
+                    <div className="flex items-center justify-end space-x-2 pt-2 border-t border-[#DCE2EA]">
+                      <a
+                        href="tel:+15552348901"
+                        className="px-3 py-1.5 rounded-xl bg-[#F8FAFC] hover:bg-slate-100 text-[#2C3847] text-xs font-medium border border-[#DCE2EA] transition-colors"
                       >
-                        <UserPlus className="w-4 h-4 text-white" />
-                        <span>Add First Caregiver →</span>
+                        Call
+                      </a>
+                      <button
+                        onClick={() => alert('Sending direct message to Rohan...')}
+                        className="px-3 py-1.5 rounded-xl bg-tranquil-600 hover:bg-tranquil-700 text-white text-xs font-medium transition-colors shadow-soft"
+                      >
+                        Message
                       </button>
                     </div>
                   </div>
-                ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {careMembers.map((member) => {
-                      const initials = member.name
-                        .split(' ')
-                        .map(n => n[0])
-                        .join('')
-                        .slice(0, 2)
-                        .toUpperCase() || 'CG';
-                      return (
-                        <div key={member.id} className="bg-white rounded-3xl p-5 sm:p-6 border border-[#DCE2EA] shadow-card space-y-4 card-hover-effect">
-                          <div className="flex items-start justify-between">
-                            <div className="flex items-center space-x-3.5">
-                              <div className="w-12 h-12 rounded-2xl bg-tranquil-100 text-tranquil-700 font-serif font-bold text-lg flex items-center justify-center border border-tranquil-200">
-                                {initials}
-                              </div>
-                              <div>
-                                <div className="flex items-center space-x-2">
-                                  <h4 className="font-serif text-base font-semibold text-[#18202A]">{member.name}</h4>
-                                  <span className="text-[10px] font-bold text-peach-800 bg-[#FDF4EF] px-2 py-0.5 rounded-full border border-[#F7C7B2]">
-                                    {member.role_tag || 'Caregiver'}
-                                  </span>
-                                </div>
-                                <p className="text-xs text-[#4F5F73]">{member.relationship_name || 'Caregiver'}</p>
-                              </div>
-                            </div>
 
-                            <span className="text-[11px] font-medium text-softMint-800 bg-[#DCEDE4] border border-[#BED5C9] px-2.5 py-1 rounded-full">
-                              {member.sync_status || 'Live Sync: Active'}
+                  {/* Member 2: Sunita Sharma (Mother) */}
+                  <div className="bg-white rounded-3xl p-5 sm:p-6 border border-[#DCE2EA] shadow-card space-y-4 card-hover-effect">
+                    <div className="flex items-start justify-between">
+                      <div className="flex items-center space-x-3.5">
+                        <div className="w-12 h-12 rounded-2xl bg-[#DCEDE4] text-softMint-800 font-serif font-bold text-lg flex items-center justify-center border border-[#BED5C9]">
+                          SS
+                        </div>
+                        <div>
+                          <div className="flex items-center space-x-2">
+                            <h4 className="font-serif text-base font-semibold text-[#18202A]">Sunita Sharma</h4>
+                            <span className="text-[10px] font-semibold text-[#4F5F73] bg-[#F8FAFC] border border-[#DCE2EA] px-2 py-0.5 rounded-full">
+                              Family
                             </span>
                           </div>
-
-                          <div className="space-y-2 text-xs">
-                            <div className="flex items-center justify-between text-[#4F5F73]">
-                              <span>Direct Phone:</span>
-                              {member.phone ? (
-                                <a href={`tel:${member.phone}`} className="font-semibold text-[#18202A] hover:underline">
-                                  {member.phone}
-                                </a>
-                              ) : (
-                                <span className="text-[#8E9CAE]">Not provided</span>
-                              )}
-                            </div>
-                            <div className="flex items-center justify-between text-[#4F5F73]">
-                              <span>Authorized Access:</span>
-                              <span className="font-medium text-[#2C3847] truncate max-w-[200px]">
-                                {member.permissions || 'Real-Time Vitals'}
-                              </span>
-                            </div>
-                          </div>
-
-                          {/* Permission Chips */}
-                          <div className="flex flex-wrap gap-1.5 pt-1">
-                            {(member.permissions || 'Real-Time Vitals').split(',').map((perm, pIdx) => (
-                              <span key={pIdx} className="text-[10px] font-medium bg-[#F8FAFC] text-[#2C3847] px-2 py-0.5 rounded-md border border-[#DCE2EA]">
-                                ✓ {perm.trim()}
-                              </span>
-                            ))}
-                          </div>
-
-                          <div className="flex items-center justify-between pt-2 border-t border-[#DCE2EA]">
-                            <button
-                              onClick={() => handleDeleteCareMember(member.id)}
-                              className="text-[11px] text-peach-700 hover:text-peach-900 hover:underline cursor-pointer"
-                            >
-                              Remove Link
-                            </button>
-                            <div className="flex items-center space-x-2">
-                              {member.phone && (
-                                <a
-                                  href={`tel:${member.phone}`}
-                                  className="px-3 py-1.5 rounded-xl bg-[#F8FAFC] hover:bg-slate-100 text-[#2C3847] text-xs font-medium border border-[#DCE2EA] transition-colors"
-                                >
-                                  Call
-                                </a>
-                              )}
-                              <button
-                                onClick={() => alert(`Direct channel with ${member.name} is active.`)}
-                                className="px-3 py-1.5 rounded-xl bg-tranquil-600 hover:bg-tranquil-700 text-white text-xs font-medium transition-colors shadow-soft cursor-pointer"
-                              >
-                                Message
-                              </button>
-                            </div>
-                          </div>
+                          <p className="text-xs text-[#4F5F73]">Mother • Caregiver</p>
                         </div>
-                      );
-                    })}
+                      </div>
+
+                      <span className="text-[11px] font-medium text-[#4F5F73] bg-[#F8FAFC] border border-[#DCE2EA] px-2.5 py-1 rounded-full">
+                        Morning Digest
+                      </span>
+                    </div>
+
+                    <div className="space-y-2 text-xs">
+                      <div className="flex items-center justify-between text-[#4F5F73]">
+                        <span>Direct Phone:</span>
+                        <a href="tel:+15558724412" className="font-semibold text-[#18202A] hover:underline">
+                          +1 (555) 872-4412
+                        </a>
+                      </div>
+                      <div className="flex items-center justify-between text-[#4F5F73]">
+                        <span>Notification Channel:</span>
+                        <span className="font-medium text-[#2C3847]">SMS Digest at 9:00 am</span>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap gap-1.5 pt-1">
+                      <span className="text-[10px] font-medium bg-[#F8FAFC] text-[#2C3847] px-2 py-0.5 rounded-md border border-[#DCE2EA]">
+                        ✓ Daily Wellness Check
+                      </span>
+                      <span className="text-[10px] font-medium bg-[#F8FAFC] text-[#2C3847] px-2 py-0.5 rounded-md border border-[#DCE2EA]">
+                        ✓ Out-of-Range Alerts
+                      </span>
+                    </div>
+
+                    <div className="flex items-center justify-end space-x-2 pt-2 border-t border-[#DCE2EA]">
+                      <a
+                        href="tel:+15558724412"
+                        className="px-3 py-1.5 rounded-xl bg-[#F8FAFC] hover:bg-slate-100 text-[#2C3847] text-xs font-medium border border-[#DCE2EA] transition-colors"
+                      >
+                        Call
+                      </a>
+                      <button
+                        onClick={() => alert('Sending note to Sunita: "Hi Mom, my readings are steady today!"')}
+                        className="px-3 py-1.5 rounded-xl bg-softMint-600 hover:bg-softMint-700 text-white text-xs font-medium transition-colors shadow-soft"
+                      >
+                        Send "Thinking of You"
+                      </button>
+                    </div>
                   </div>
-                )}
+
+                  {/* Member 3: Dr. Sarah Jenkins (Physician) */}
+                  <div className="bg-white rounded-3xl p-5 sm:p-6 border border-[#DCE2EA] shadow-card space-y-4 card-hover-effect">
+                    <div className="flex items-start justify-between">
+                      <div className="flex items-center space-x-3.5">
+                        <div className="w-12 h-12 rounded-2xl bg-[#EAE4F6] text-[#69509B] font-serif font-bold text-lg flex items-center justify-center border border-[#D9CDEE]">
+                          Dr
+                        </div>
+                        <div>
+                          <div className="flex items-center space-x-2">
+                            <h4 className="font-serif text-base font-semibold text-[#18202A]">Dr. Sarah Jenkins</h4>
+                            <span className="text-[10px] font-semibold text-softMint-800 bg-[#DCEDE4] border border-[#BED5C9] px-2 py-0.5 rounded-full">
+                              Physician
+                            </span>
+                          </div>
+                          <p className="text-xs text-[#4F5F73]">Internal Medicine • Mercy Health Center</p>
+                        </div>
+                      </div>
+
+                      <span className="text-[11px] font-medium text-[#4F5F73] bg-[#F8FAFC] border border-[#DCE2EA] px-2.5 py-1 rounded-full">
+                        Weekly Brief Sync
+                      </span>
+                    </div>
+
+                    <div className="space-y-2 text-xs">
+                      <div className="flex items-center justify-between text-[#4F5F73]">
+                        <span>Clinic Phone:</span>
+                        <a href="tel:+15554431200" className="font-semibold text-[#18202A] hover:underline">
+                          +1 (555) 443-1200
+                        </a>
+                      </div>
+                      <div className="flex items-center justify-between text-[#4F5F73]">
+                        <span>Clinical Registry:</span>
+                        <span className="font-mono text-[11px] text-[#2C3847]">NPI #18429401 • Mercy Health Chart</span>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap gap-1.5 pt-1">
+                      <span className="text-[10px] font-medium bg-[#F8FAFC] text-[#2C3847] px-2 py-0.5 rounded-md border border-[#DCE2EA]">
+                        ✓ Diagnostic Labs
+                      </span>
+                      <span className="text-[10px] font-medium bg-[#F8FAFC] text-[#2C3847] px-2 py-0.5 rounded-md border border-[#DCE2EA]">
+                        ✓ 8-Day Trajectory Brief
+                      </span>
+                      <span className="text-[10px] font-medium bg-[#F8FAFC] text-[#2C3847] px-2 py-0.5 rounded-md border border-[#DCE2EA]">
+                        ✓ Medication Adherence
+                      </span>
+                    </div>
+
+                    <div className="flex items-center justify-end space-x-2 pt-2 border-t border-[#DCE2EA]">
+                      <a
+                        href="tel:+15554431200"
+                        className="px-3 py-1.5 rounded-xl bg-[#F8FAFC] hover:bg-slate-100 text-[#2C3847] text-xs font-medium border border-[#DCE2EA] transition-colors"
+                      >
+                        Call Clinic
+                      </a>
+                      <button
+                        onClick={() => setIsDoctorModalOpen(true)}
+                        className="px-3 py-1.5 rounded-xl bg-tranquil-600 hover:bg-tranquil-700 text-white text-xs font-medium transition-colors shadow-soft"
+                      >
+                        View Doctor Brief
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Member 4: Aarav Sharma (Brother / Backup) */}
+                  <div className="bg-white rounded-3xl p-5 sm:p-6 border border-[#DCE2EA] shadow-card space-y-4 card-hover-effect">
+                    <div className="flex items-start justify-between">
+                      <div className="flex items-center space-x-3.5">
+                        <div className="w-12 h-12 rounded-2xl bg-[#F8FAFC] text-[#2C3847] font-serif font-bold text-lg flex items-center justify-center border border-[#DCE2EA]">
+                          AS
+                        </div>
+                        <div>
+                          <div className="flex items-center space-x-2">
+                            <h4 className="font-serif text-base font-semibold text-[#18202A]">Aarav Sharma</h4>
+                            <span className="text-[10px] font-semibold text-[#4F5F73] bg-[#F8FAFC] border border-[#DCE2EA] px-2 py-0.5 rounded-full">
+                              Secondary Proxy
+                            </span>
+                          </div>
+                          <p className="text-xs text-[#4F5F73]">Brother • Emergency Standby</p>
+                        </div>
+                      </div>
+
+                      <span className="text-[11px] font-medium text-[#4F5F73] bg-[#F8FAFC] border border-[#DCE2EA] px-2.5 py-1 rounded-full">
+                        Standby
+                      </span>
+                    </div>
+
+                    <div className="space-y-2 text-xs">
+                      <div className="flex items-center justify-between text-[#4F5F73]">
+                        <span>Direct Phone:</span>
+                        <a href="tel:+15553129980" className="font-semibold text-[#18202A] hover:underline">
+                          +1 (555) 312-9980
+                        </a>
+                      </div>
+                      <div className="flex items-center justify-between text-[#4F5F73]">
+                        <span>Protocol:</span>
+                        <span className="font-medium text-[#2C3847]">Alerted only if Rohan is unreachable</span>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap gap-1.5 pt-1">
+                      <span className="text-[10px] font-medium bg-[#F8FAFC] text-[#2C3847] px-2 py-0.5 rounded-md border border-[#DCE2EA]">
+                        ✓ Backup Emergency Access
+                      </span>
+                    </div>
+
+                    <div className="flex items-center justify-end space-x-2 pt-2 border-t border-[#DCE2EA]">
+                      <a
+                        href="tel:+15553129980"
+                        className="px-3 py-1.5 rounded-xl bg-[#F8FAFC] hover:bg-slate-100 text-[#2C3847] text-xs font-medium border border-[#DCE2EA] transition-colors"
+                      >
+                        Call
+                      </a>
+                      <button
+                        onClick={() => alert('Caregiver settings for Aarav updated.')}
+                        className="px-3 py-1.5 rounded-xl bg-white border border-[#DCE2EA] hover:bg-slate-50 text-[#2C3847] text-xs font-medium transition-colors"
+                      >
+                        Manage
+                      </button>
+                    </div>
+                  </div>
+                </div>
               </section>
 
               {/* ==================== CARE CIRCLE SHARING PERMISSIONS (INTERACTIVE) ==================== */}
@@ -3529,14 +4096,14 @@ export default function Dashboard({ onNavigateToHome, onSignOut, initialTab }: D
                 <div>
                   <div className="flex items-center space-x-2">
                     <h3 className="font-serif text-xl sm:text-2xl font-normal text-[#18202A]">
-                      {patient?.name || 'Eleanor Vance'}
+                      {patient?.name || 'Meera Sharma'}
                     </h3>
                     <span className="text-[11px] font-medium text-softMint-900 bg-[#DCEDE4] border border-[#BED5C9] px-2.5 py-0.5 rounded-full">
                       Active Member
                     </span>
                   </div>
                   <p className="text-xs text-[#4F5F73] font-sans mt-0.5">
-                    Age 34 • ID #VG-89412 • Baseline Active
+                    Age 34 • ID #VG-89412 • Member since Oct 2024
                   </p>
                 </div>
               </div>
@@ -3553,9 +4120,7 @@ export default function Dashboard({ onNavigateToHome, onSignOut, initialTab }: D
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
               <div className="bg-[#F8FAFC] p-3 rounded-2xl border border-[#DCE2EA] text-center">
                 <span className="text-[10px] font-semibold uppercase tracking-wider text-[#8E9CAE] block">Blood Type</span>
-                <span className="text-sm font-serif font-semibold text-[#18202A] mt-0.5 block truncate">
-                  {emergencyPass?.blood_type || 'O Positive'}
-                </span>
+                <span className="text-sm font-serif font-semibold text-[#18202A] mt-0.5 block">O Positive</span>
               </div>
               <div className="bg-[#F8FAFC] p-3 rounded-2xl border border-[#DCE2EA] text-center">
                 <span className="text-[10px] font-semibold uppercase tracking-wider text-[#8E9CAE] block">Height</span>
@@ -3710,21 +4275,19 @@ export default function Dashboard({ onNavigateToHome, onSignOut, initialTab }: D
             <div className="p-4 rounded-2xl bg-[#F8FAFC] border border-[#DCE2EA] text-xs space-y-2.5">
               <div className="flex items-center justify-between font-medium pb-2 border-b border-[#DCE2EA]">
                 <span className="text-[#4F5F73]">Primary Physician</span>
-                <span className="text-[#18202A] font-semibold">{emergencyPass?.physician_name || 'Dr. Sarah Jenkins (Mercy Health)'}</span>
+                <span className="text-[#18202A] font-semibold">Dr. Sarah Jenkins (Mercy Health)</span>
               </div>
               <div className="flex items-center justify-between font-medium pb-2 border-b border-[#DCE2EA]">
                 <span className="text-[#4F5F73]">Emergency Contact</span>
-                <span className="text-[#18202A] font-semibold">
-                  {emergencyPass?.emergency_contact_name || 'Julian Vance'} {emergencyPass?.emergency_contact_phone ? `(${emergencyPass.emergency_contact_phone})` : ''}
-                </span>
+                <span className="text-[#18202A] font-semibold">Rohan Kapoor (Spouse, +1 555-0192)</span>
               </div>
               <div className="flex items-center justify-between font-medium pb-2 border-b border-[#DCE2EA]">
                 <span className="text-[#4F5F73]">Allergies & Sensitivities</span>
-                <span className="text-peach-800 font-semibold">{emergencyPass?.allergies || 'Penicillin (Severe Anaphylaxis)'}</span>
+                <span className="text-peach-800 font-semibold">Penicillin (Severe Anaphylaxis)</span>
               </div>
               <div className="flex items-center justify-between font-medium">
-                <span className="text-[#4F5F73]">Hospital of Record</span>
-                <span className="text-softMint-800 font-semibold">{emergencyPass?.hospital_preference || 'Mercy Health Trauma Center'}</span>
+                <span className="text-[#4F5F73]">Calibrated Baseline Window</span>
+                <span className="text-softMint-800 font-semibold">90-Day Rolling Window</span>
               </div>
             </div>
 
@@ -3827,7 +4390,7 @@ export default function Dashboard({ onNavigateToHome, onSignOut, initialTab }: D
             </div>
 
             <div className="p-4 rounded-2xl bg-[#F8FAFC] border border-[#DCE2EA] text-xs space-y-2 text-[#18202A] font-sans leading-relaxed">
-              <p><strong>Patient:</strong> {patient?.name || 'Eleanor Vance'} (34 years old)</p>
+              <p><strong>Patient:</strong> {patient?.name || 'Meera Sharma'} (34 years old)</p>
               <p><strong>Date:</strong> {patient?.greeting_date || '11 October'}</p>
               <p><strong>Chief Observation:</strong> A continuous 8-day gradual rise in resting heart rate (69 bpm to 78 bpm, +9 bpm over baseline).</p>
               <p><strong>Co-occurring Factors:</strong> Nightly sleep duration averaged 5.7 hours over this period (typical baseline is 7–9 hours). Oral body temperature is slightly elevated at 37.1°C (baseline 36.6°C).</p>
@@ -3876,7 +4439,7 @@ export default function Dashboard({ onNavigateToHome, onSignOut, initialTab }: D
                   First Responder & Bystander Medical ID
                 </h3>
                 <p className="text-xs text-[#4F5F73] mt-1">
-                  For paramedics, emergency doctors, and Good Samaritans assisting <strong className="text-[#18202A]">{patient?.name || 'Eleanor Vance'}</strong>.
+                  For paramedics, emergency doctors, and Good Samaritans assisting <strong className="text-[#18202A]">Meera Sharma</strong>.
                 </p>
               </div>
 
@@ -3907,10 +4470,10 @@ export default function Dashboard({ onNavigateToHome, onSignOut, initialTab }: D
                   Blood Group (Rh Factor)
                 </span>
                 <span className="text-2xl font-serif font-bold text-peach-700 mt-1 block">
-                  {emergencyPass?.blood_type || 'O+ (Rh Positive)'}
+                  O+ (Rh Positive)
                 </span>
                 <p className="text-[11px] text-[#4F5F73] mt-1">
-                  Universal Red Cell Donor • Compatible with verified transfusions
+                  Universal Red Cell Donor • Compatible with O+ and O- transfusion
                 </p>
               </div>
 
@@ -3920,10 +4483,10 @@ export default function Dashboard({ onNavigateToHome, onSignOut, initialTab }: D
                   ⚠️ Severe Drug Allergy Alert
                 </span>
                 <span className="text-sm font-bold text-peach-900 mt-1 block">
-                  {emergencyPass?.allergies || 'None recorded'}
+                  PENICILLIN (Fatal Anaphylaxis)
                 </span>
                 <p className="text-[11px] text-peach-800 mt-1 leading-relaxed">
-                  Review verified clinical allergy history prior to emergent pharmacotherapy administration.
+                  DO NOT administer penicillin, ampicillin, or related beta-lactams. Secondary allergy: Sulfa drugs.
                 </p>
               </div>
 
@@ -3968,10 +4531,10 @@ export default function Dashboard({ onNavigateToHome, onSignOut, initialTab }: D
                   <strong className="text-[#18202A]">Current Supplements:</strong> Vitamin D3 (1000 IU), Magnesium Glycinate (200mg nightly).
                 </div>
                 <div>
-                  <strong className="text-[#18202A]">Hospital of Record:</strong> {emergencyPass?.hospital_preference || 'Mercy Health Trauma Center, Chicago IL'}.
+                  <strong className="text-[#18202A]">Hospital of Record:</strong> Mercy Health Trauma Center, Chicago IL.
                 </div>
                 <div>
-                  <strong className="text-[#18202A]">Primary Care Physician:</strong> {emergencyPass?.physician_name || 'Dr. Sarah Jenkins'}.
+                  <strong className="text-[#18202A]">Primary Care Physician:</strong> Dr. Sarah Jenkins (NPI #18429401).
                 </div>
               </div>
             </div>
@@ -3984,31 +4547,31 @@ export default function Dashboard({ onNavigateToHome, onSignOut, initialTab }: D
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                 <a
-                  href={`tel:${emergencyPass?.emergency_contact_phone || '+15552348901'}`}
+                  href="tel:+15552348901"
                   className="flex items-center justify-between p-3.5 rounded-2xl bg-tranquil-600 text-white text-xs font-medium hover:bg-tranquil-700 shadow-soft transition-all transform active:scale-95"
                 >
                   <div className="flex items-center space-x-2.5">
                     <Phone className="w-4 h-4 text-white animate-pulse-soft" />
                     <div>
-                      <p className="font-semibold text-white">Call {emergencyPass?.emergency_contact_name || 'Emergency Contact'}</p>
-                      <p className="text-[10px] text-tranquil-100">Primary Medical Proxy</p>
+                      <p className="font-semibold text-white">Call Rohan Kapoor</p>
+                      <p className="text-[10px] text-tranquil-100">Spouse & Primary Medical Proxy</p>
                     </div>
                   </div>
-                  <span className="font-mono text-xs text-white font-bold">{emergencyPass?.emergency_contact_phone || '+1 555-234-8901'}</span>
+                  <span className="font-mono text-xs text-white font-bold">+1 555-234-8901</span>
                 </a>
 
                 <a
-                  href={`tel:${emergencyPass?.physician_phone || '+15558724412'}`}
+                  href="tel:+15558724412"
                   className="flex items-center justify-between p-3.5 rounded-2xl bg-[#DCEDE4] hover:bg-[#CDE3D7] border border-[#BED5C9] text-[#2B6449] text-xs font-medium shadow-xs transition-all"
                 >
                   <div className="flex items-center space-x-2.5">
                     <Phone className="w-4 h-4 text-softMint-700" />
                     <div>
-                      <p className="font-semibold text-[#18202A]">Call {emergencyPass?.physician_name || 'Attending Physician'}</p>
-                      <p className="text-[10px] text-[#4F5F73]">Clinical Registry Contact</p>
+                      <p className="font-semibold text-[#18202A]">Call Sunita Sharma</p>
+                      <p className="text-[10px] text-[#4F5F73]">Mother & Family Caregiver</p>
                     </div>
                   </div>
-                  <span className="font-mono text-xs text-[#2B6449] font-medium">{emergencyPass?.physician_phone || '+1 555-742-9901'}</span>
+                  <span className="font-mono text-xs text-[#2B6449] font-medium">+1 555-872-4412</span>
                 </a>
 
                 <a
@@ -4141,7 +4704,16 @@ export default function Dashboard({ onNavigateToHome, onSignOut, initialTab }: D
               </div>
             ) : (
               <form
-                onSubmit={handleAddCareMember}
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  setInviteSuccess(true);
+                  setTimeout(() => {
+                    setInviteSuccess(false);
+                    setIsInviteModalOpen(false);
+                    setInviteName('');
+                    setInviteContact('');
+                  }, 2500);
+                }}
                 className="space-y-4 text-xs font-sans"
               >
                 <div>
@@ -4230,179 +4802,10 @@ export default function Dashboard({ onNavigateToHome, onSignOut, initialTab }: D
                 </div>
               </form>
             )}
+
           </div>
         </div>
       )}
-
-      {/* ==================== ADD PRESCRIBED MEDICINE MODAL ==================== */}
-      <AnimatePresence>
-        {isAddMedModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setIsAddMedModalOpen(false)}
-              className="fixed inset-0 bg-slateInk-900/60 backdrop-blur-md"
-            />
-
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: 16 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 16 }}
-              transition={{ duration: 0.25, ease: fluidEase }}
-              className="relative w-full max-w-md bg-white border border-[#DCE2EA] rounded-3xl shadow-float p-6 sm:p-7 z-10 overflow-hidden"
-            >
-              <div className="flex items-center justify-between pb-3 border-b border-[#DCE2EA]">
-                <div className="flex items-center space-x-2.5">
-                  <div className="w-10 h-10 rounded-2xl bg-tranquil-50 border border-tranquil-200 text-tranquil-700 flex items-center justify-center font-bold text-sm shadow-2xs">
-                    Rx
-                  </div>
-                  <div>
-                    <h3 className="font-serif text-lg font-medium text-slateInk-900">
-                      Add Prescribed Medicine
-                    </h3>
-                    <p className="text-[11px] text-slateInk-500">
-                      Log a doctor-prescribed medication to Today's care protocol
-                    </p>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setIsAddMedModalOpen(false)}
-                  className="p-1.5 rounded-xl text-slateInk-400 hover:text-slateInk-800 hover:bg-slate-100 transition-colors cursor-pointer"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-
-              <form onSubmit={handleAddMedication} className="mt-4 space-y-3.5">
-                <div>
-                  <label className="block text-[11px] font-semibold text-slateInk-700 mb-1">
-                    Medicine Name *
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={newMedName}
-                    onChange={(e) => setNewMedName(e.target.value)}
-                    placeholder="e.g. Atorvastatin Calcium or Metformin"
-                    className="w-full px-3.5 py-2.5 rounded-2xl bg-white border border-[#DCE2EA] focus:outline-none focus:border-tranquil-500 text-xs text-slateInk-900 placeholder:text-slateInk-300 transition-colors shadow-xs"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[11px] font-semibold text-slateInk-700 mb-1">
-                    Dosage & Instructions *
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={newMedDosage}
-                    onChange={(e) => setNewMedDosage(e.target.value)}
-                    placeholder="e.g. 20 mg - Once nightly after dinner"
-                    className="w-full px-3.5 py-2.5 rounded-2xl bg-white border border-[#DCE2EA] focus:outline-none focus:border-tranquil-500 text-xs text-slateInk-900 placeholder:text-slateInk-300 transition-colors shadow-xs"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[11px] font-semibold text-slateInk-700 mb-1">
-                    Daily Timing
-                  </label>
-                  <div className="grid grid-cols-4 gap-2">
-                    {(['Morning', 'Afternoon', 'Evening', 'Night'] as const).map(timing => (
-                      <button
-                        type="button"
-                        key={timing}
-                        onClick={() => setNewMedTiming(timing)}
-                        className={`py-2 px-1 rounded-xl text-xs font-medium border text-center transition-all cursor-pointer ${
-                          newMedTiming === timing
-                            ? 'border-tranquil-500 bg-tranquil-50 text-tranquil-800 font-semibold shadow-xs'
-                            : 'border-[#DCE2EA] bg-white text-slateInk-600 hover:bg-slate-50'
-                        }`}
-                      >
-                        {timing}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-[11px] font-semibold text-slateInk-700 mb-1">
-                    Category / Indication
-                  </label>
-                  <div className="flex flex-wrap gap-1.5">
-                    {['Prescription Rx', 'Lipid Management', 'Glycemic Control', 'Cardiovascular', 'Sleep & Recovery', 'Immune Support'].map(cat => (
-                      <button
-                        type="button"
-                        key={cat}
-                        onClick={() => setNewMedCategory(cat)}
-                        className={`py-1 px-2.5 rounded-lg text-[11px] border transition-colors cursor-pointer ${
-                          newMedCategory === cat
-                            ? 'bg-softMint-100 border-softMint-300 text-softMint-900 font-semibold shadow-xs'
-                            : 'bg-white border-[#DCE2EA] text-slateInk-600 hover:bg-slate-50'
-                        }`}
-                      >
-                        {cat}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-[11px] font-semibold text-slateInk-700 mb-1">
-                    Clinical Notes (Optional)
-                  </label>
-                  <input
-                    type="text"
-                    value={newMedNotes}
-                    onChange={(e) => setNewMedNotes(e.target.value)}
-                    placeholder="e.g. Prescribed by Dr. Jenkins; take with food"
-                    className="w-full px-3.5 py-2.5 rounded-2xl bg-white border border-[#DCE2EA] focus:outline-none focus:border-tranquil-500 text-xs text-slateInk-900 placeholder:text-slateInk-300 transition-colors shadow-xs"
-                  />
-                </div>
-
-                <div className="pt-2 flex items-center justify-end gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setIsAddMedModalOpen(false)}
-                    className="px-4 py-2 rounded-xl text-xs text-slateInk-600 hover:bg-slate-100 transition-colors cursor-pointer"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={isSubmittingMed || !newMedName.trim() || !newMedDosage.trim()}
-                    className="px-5 py-2.5 rounded-2xl bg-tranquil-600 hover:bg-tranquil-700 disabled:opacity-50 text-white font-semibold text-xs shadow-soft transition-all cursor-pointer flex items-center gap-1.5"
-                  >
-                    {isSubmittingMed ? (
-                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                    ) : (
-                      <Check className="w-3.5 h-3.5" />
-                    )}
-                    <span>Save Prescribed Medicine</span>
-                  </button>
-                </div>
-              </form>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-      {/* Toast Confirmation for Added Medicine */}
-      <AnimatePresence>
-        {addMedSuccessToast && (
-          <motion.div
-            initial={{ opacity: 0, y: 16 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 16 }}
-            className="fixed bottom-6 right-6 z-50 bg-slateInk-900 text-white py-3 px-4 rounded-2xl shadow-float flex items-center space-x-2.5 text-xs border border-white/20"
-          >
-            <CheckCircle2 className="w-4 h-4 text-softMint-400 shrink-0" />
-            <span>Prescribed medicine saved to Today's care protocol!</span>
-          </motion.div>
-        )}
-      </AnimatePresence>
 
     </div>
   );

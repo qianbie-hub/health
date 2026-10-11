@@ -57,7 +57,7 @@ export default function App() {
           setIsAuthenticated(true);
         })
         .catch(() => {
-          // If token expired, fall back to offline demo or clear
+          // If token expired, fall back to local mode
           console.warn('Backend session unverified, continuing in local mode');
         });
     }
@@ -69,6 +69,7 @@ export default function App() {
       const hash = window.location.hash;
       if (hash.includes('dashboard')) {
         if (!isAuthenticated) {
+          // Protected: unauthenticated users cannot access dashboard
           setCurrentPage('home');
           setIsAuthModalOpen(true);
           setAuthMode('signin');
@@ -100,7 +101,9 @@ export default function App() {
     localStorage.setItem('vigil_authenticated', 'true');
     const storedUser = localStorage.getItem('vigil_user');
     if (storedUser) {
-      try { setCurrentUser(JSON.parse(storedUser)); } catch {}
+      try {
+        setCurrentUser(JSON.parse(storedUser));
+      } catch {}
     }
     setIsAuthModalOpen(false);
     setCurrentPage('dashboard');
@@ -158,7 +161,7 @@ export default function App() {
         />
       )}
 
-      {/* Authenticated Signup & Login Modal */}
+      {/* Teammate-Ready Auth & Signup Modal */}
       <AuthModal
         isOpen={isAuthModalOpen}
         onClose={() => setIsAuthModalOpen(false)}
