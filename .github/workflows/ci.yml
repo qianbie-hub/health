@@ -19,6 +19,7 @@ jobs:
         with:
           python-version: '3.11'
           cache: 'pip'
+          cache-dependency-path: backend/requirements.txt
 
       - name: Install dependencies
         run: |
@@ -28,7 +29,8 @@ jobs:
       - name: Run Backend Test Suite
         env:
           ENVIRONMENT: test
-          SECRET_KEY: test-secret-key-321
+          SECRET_KEY: test-secret-key-321-vigil-health-copilot-ci-gate
+          PYTHONPATH: backend
         run: |
           pytest backend/test_api.py -v
 
