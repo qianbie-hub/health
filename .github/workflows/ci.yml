@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [ main, master ]
 
+permissions:
+  contents: read
+
 jobs:
   backend-test:
     name: Backend Test & Quality Gate
@@ -64,19 +67,8 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx
-        uses: actions/setup-buildx-action@v3
-
       - name: Build Backend Docker Image
-        uses: docker/build-push-action@v5
-        with:
-          context: ./backend
-          push: false
-          tags: vigil-backend:ci
+        run: docker build -t vigil-backend:ci ./backend
 
       - name: Build Frontend Docker Image
-        uses: docker/build-push-action@v5
-        with:
-          context: ./frontend
-          push: false
-          tags: vigil-frontend:ci
+        run: docker build -t vigil-frontend:ci ./frontend
